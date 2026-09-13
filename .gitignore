@@ -1,0 +1,5 @@
+result
+result/*
+*.qcow2
+*.raw
+.pre-commit-config.yaml

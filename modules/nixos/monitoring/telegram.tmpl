@@ -1,0 +1,67 @@
+{{ define "__emoji_subject_html" }}
+<b>[{{- if gt (len .Alerts.Firing) 0 }}FIRING:{{ len .Alerts.Firing }}{{ end -}}
+{{- if and (gt (len .Alerts.Firing) 0) (gt (len .Alerts.Resolved) 0) }}, {{ end -}}
+{{- if gt (len .Alerts.Resolved) 0 }}RESOLVED:{{ len .Alerts.Resolved }}{{ end -}}] {{ .GroupLabels.SortedPairs.Values | join " " }}</b>
+{{- end }}
+
+{{ define "telegram.default.message" }}
+{{ template "__emoji_subject_html" . }}
+
+{{- if gt (len .Alerts) 1 }}
+{{- if gt (len .CommonLabels) 0 }}
+<b>Common Labels:</b>
+{{- range .CommonLabels.SortedPairs }}
+• <code>{{ .Name }}</code>: <i>{{ .Value }}</i>
+{{- end }}
+{{- end }}
+
+{{- if gt (len .CommonAnnotations) 0 }}
+<b>Common Annotations:</b>
+{{- range .CommonAnnotations.SortedPairs }}
+<b>{{ .Name | title }}</b>: {{ .Value }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- if gt (len .Alerts.Firing) 0 }}
+
+<b>Alerts Firing 🚨</b>
+━━━━━━━━━━━
+{{- range .Alerts.Firing }}
+
+{{- range .Annotations.SortedPairs -}}
+  {{- if or (eq (len $.Alerts) 1) (not (index $.CommonAnnotations .Name)) }}
+<b>{{ .Name | title }}:</b> {{ .Value }}
+  {{- end -}}
+{{- end }}
+<b>Labels:</b>
+{{- range .Labels.SortedPairs -}}
+  {{- if or (eq (len $.Alerts) 1) (not (index $.CommonLabels .Name)) }}
+• <code>{{ .Name }}</code>: <i>{{ .Value }}</i>
+  {{- end -}}
+{{- end }}
+*Since:* {{ .StartsAt.Format "15:04:05 2/1/2006" }} | <a href="{{ .GeneratorURL }}">Source</a> | <a href="{{ $.ExternalURL }}/#/silences/new?filter=%7B{{ range $i, $label := .Labels.SortedPairs }}{{ if $i }}%2C{{ end }}{{ $label.Name | urlquery }}%3D%22{{ $label.Value | urlquery }}%22{{ end }}%7D">🔕</a>
+{{- end }}
+{{- end }}
+
+{{- if gt (len .Alerts.Resolved) 0 }}
+
+<b>Alerts Resolved ✅</b>
+━━━━━━━━━━━
+{{- range .Alerts.Resolved }}
+
+{{- range .Annotations.SortedPairs -}}
+  {{- if or (eq (len $.Alerts) 1) (not (index $.CommonAnnotations .Name)) }}
+<b>{{ .Name | title }}:</b> {{ .Value }}
+  {{- end -}}
+{{- end }}
+<b>Labels:</b>
+{{- range .Labels.SortedPairs -}}
+  {{- if or (eq (len $.Alerts) 1) (not (index $.CommonLabels .Name)) }}
+• <code>{{ .Name }}</code>: <i>{{ .Value }}</i>
+  {{- end -}}
+{{- end }}
+<a href="{{ .GeneratorURL }}">Source</a> | <a href="{{ $.ExternalURL }}/#/silences/new?filter=%7B{{ range $i, $label := .Labels.SortedPairs }}{{ if $i }}%2C{{ end }}{{ $label.Name | urlquery }}%3D%22{{ $label.Value | urlquery }}%22{{ end }}%7D">🔕</a>
+{{- end }}
+{{- end }}
+{{- end }}
