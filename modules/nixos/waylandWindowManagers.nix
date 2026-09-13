@@ -2,7 +2,6 @@
   config,
   lib,
   pkgs,
-  flake-root,
   self,
   ...
 }:
@@ -526,7 +525,7 @@ in
       settings = {
         background = {
           fit = "Cover";
-          path = /${flake-root}/assets/lockscreen.png;
+          path = ../../assets/lockscreen.png;
 
         };
         GTK = {

@@ -65,44 +65,20 @@
   };
 
   # Nothing here may reference the private tree: this directory is a subtree of
-  # the private flake and gets published on its own. The private flake consumes
-  # it as a relative path input and assembles the nixosConfigurations.
+  # the private flake and gets published on its own. Host configurations are
+  # assembled there, so what this flake exposes is usable on its own.
   outputs =
     {
       self,
       nixpkgs,
-      nixpkgs-stable,
-      disko-stable,
-      disko,
-      agenix,
-      agenix-rekey,
-      wirenix,
       mnw,
-      nixpkgs-unfree,
       llm-agents,
-      preservation,
       git-hooks,
       treefmt-nix,
       jail-nix,
       ...
     }:
     let
-      # specialArgs
-      flake-root = ./.;
-
-      stable = {
-        nixpkgs = nixpkgs-stable;
-        disko = disko-stable;
-        agenix = agenix;
-      };
-
-      # deadnix: skip
-      unstable = {
-        nixpkgs = nixpkgs;
-        disko = disko;
-        agenix = agenix;
-      };
-
       forAllSystems =
         function: nixpkgs':
         nixpkgs'.lib.genAttrs nixpkgs'.lib.systems.flakeExposed (
@@ -167,63 +143,22 @@
       nixosModules.common = ./modules/nixos;
       overlays = import ./overlays;
 
-      lib = {
-        inherit stable unstable;
-
-        mkPreCommitCheck =
-          {
-            pkgs,
-            system,
-            src,
-          }:
-          git-hooks.lib.${system}.run {
-            inherit src;
-            package = pkgs.prek;
-            hooks = {
-              nixfmt.enable = true;
-              deadnix.enable = true;
-              deadnix.settings.noLambdaPatternNames = true;
-              deadnix.settings.noLambdaArg = true;
-              flake-checker.enable = true;
-            };
+      lib.mkPreCommitCheck =
+        {
+          pkgs,
+          system,
+          src,
+        }:
+        git-hooks.lib.${system}.run {
+          inherit src;
+          package = pkgs.prek;
+          hooks = {
+            nixfmt.enable = true;
+            deadnix.enable = true;
+            deadnix.settings.noLambdaPatternNames = true;
+            deadnix.settings.noLambdaArg = true;
+            flake-checker.enable = true;
           };
-
-        # The blog content lives in the private tree, so the caller passes it in.
-        mkBlog = pkgs: src: pkgs.callPackage ./packages/blog.nix { inherit src; };
-
-        # specialArgs has to carry `private` (the tree holding the secrets and
-        # the host overrides) and `self` (the flake defining the resulting
-        # nixosConfigurations), both of which modules here reach for.
-        mkNixosSystem =
-          {
-            host,
-            branch ? stable,
-            modules ? [ ],
-            specialArgs,
-          }:
-          branch.nixpkgs.lib.nixosSystem {
-            specialArgs = {
-              inherit
-                flake-root
-                nixpkgs
-                nixpkgs-unfree
-                ;
-            }
-            // specialArgs;
-            modules = [
-              self.nixosModules.common
-              branch.disko.nixosModules.disko
-              branch.agenix.nixosModules.default
-              agenix-rekey.nixosModules.default
-              wirenix.nixosModules.default
-              preservation.nixosModules.default
-              ./hosts/${host}
-              {
-                nix.registry.nixpkgs-unstable.flake = nixpkgs;
-              }
-            ]
-            ++ modules;
-          };
-      };
+        };
     };
 }

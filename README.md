@@ -1,22 +1,38 @@
 # nixos-config
-## Environment setup
-<!-- vim-markdown-toc GFM -->
 
-* [Setting up the environment](#setting-up-the-environment)
-    * [Flakes](#flakes)
-    * [No flakes](#no-flakes)
-* [Installation](#installation)
-    * [Installing NixOS in UEFI x86 manually](#installing-nixos-in-uefi-x86-manually)
-    * [Installing NixOS with nixos-anywhere](#installing-nixos-with-nixos-anywhere)
-    * [Building a NixOS sdimage for the Raspberry Pi](#building-a-nixos-sdimage-for-the-raspberry-pi)
-    * [Home Manager for **Non-NixOS** systems](#home-manager-for-non-nixos-systems)
-* [Deployment](#deployment)
-    * [Deploying NixOS locally](#deploying-nixos-locally)
-    * [Deploying NixOS over the network with deploy-rs](#deploying-nixos-over-the-network-with-deploy-rs)
-    * [Getting the git revision of this repo in a running system](#getting-the-git-revision-of-this-repo-in-a-running-system)
+NixOS modules, packages and overlays. This is a subtree of a private repo that
+holds the host configurations, so there are no `nixosConfigurations` here: what
+is exposed is meant to be usable on its own.
 
-<!-- vim-markdown-toc -->
+## What is in here
+
+| output | |
+| --- | --- |
+| `nixosModules.common` | the module set, everything under `custom.*` |
+| `packages` | `claude-code`, `claude-sandbox`, `mcp-victoriametrics`, `nvim-mnw` |
+| `overlays` | package overrides and additions |
+| `lib.mkPreCommitCheck` | the nixfmt/deadnix/flake-checker hook set |
+| `devShells`, `formatter`, `checks` | |
+
+## Using the modules
+
+`nixosModules.common` expects a few specialArgs: `self` (the flake defining
+your `nixosConfigurations`, used for `self.packages`, `self.overlays` and
+`self.inputs`), plus `nixpkgs` and `nixpkgs-unfree`. Options live under
+`custom.*` and everything is off by default.
+
+```nix
+nixpkgs.lib.nixosSystem {
+  specialArgs = { inherit self nixpkgs nixpkgs-unfree; };
+  modules = [
+    inputs.nixos-config.nixosModules.common
+    ./configuration.nix
+  ];
+}
+```
+
 ## Setting up the environment
+
 ### Flakes
 ```bash
 nix develop
@@ -24,76 +40,4 @@ nix develop
 ### No flakes
 ```bash
 nix-shell
-```
-
-## Installation
-### Installing NixOS in UEFI manually
-Follow [the official manual](https://nixos.org/manual/nixos/stable/#sec-installation-manual)
-
-### Installing NixOS with nixos-anywhere
-To check that the configuration is bootable, run:
-```shell
-nix run github:nix-community/nixos-anywhere -- --flake .#hostname --vm-test
-```
-
-Boot the installer and change the root password, then run:
-Generate the hardware config:
-```bash
-nix run github:nix-community/nixos-anywhere -- --generate-hardware-config nixos-generate-config ./hosts/hostname/hardware-configuration.nix root@ip
-```
-
-Install:
-```bash
-nix run github:nix-community/nixos-anywhere -- --flake .#hostname root@ip
-```
-
-### Building a NixOS sdimage for the Raspberry Pi
-```bash
-nix build .#nixosConfigurations.rpi3.config.system.build.sdImage
-```
-This image can later be flashed with dd.
-
-### Home Manager for **Non-NixOS** systems
-
-Install nix:
-
-```bash
-curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
-```
-
-Add to ~/.config/nix/nix.conf:
-
-```conf
-experimental-features = nix-command flakes
-```
-
-And then run:
-
-```bash
-nix run home-manager/master -- init --switch
-mkdir ~/projects && cd ~/projects
-git clone https://github.com/Toomoch/nixos-config.git && cd nixos-config
-home-manager switch --flake .#username
-```
-
-## Deployment
-### Deploying NixOS locally
-For our hostname:
-```bash
-just rebuild
-```
-For a specific hostname:
-```bash
-just rebuild hostname
-```
-
-### Deploying NixOS over the network with deploy-rs
-To deploy:
-```bash
-just deploy hostname
-```
-
-### Getting the git revision of this repo in a running system
-```bash
-just revision
 ```
