@@ -3,6 +3,7 @@
   hugo,
   lib,
   stdenvNoCC,
+  src,
 }:
 let
   # config.toml sets theme = "hugo-theme-stack", so it has to land under that
@@ -16,7 +17,7 @@ let
 in
 stdenvNoCC.mkDerivation {
   name = "blog";
-  src = ../private/blog;
+  inherit src;
 
   nativeBuildInputs = [ hugo ];
 

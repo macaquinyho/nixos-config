@@ -1,5 +1,4 @@
 {
-  private,
   config,
   pkgs,
   lib,
@@ -51,7 +50,6 @@
     };
   };
   age.secrets.gitea-actions = {
-    rekeyFile = /${private}/secrets/age/codeberg-runner-h81.age;
     owner = "root";
     group = "root";
   };

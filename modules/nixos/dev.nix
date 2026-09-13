@@ -5,7 +5,6 @@
   lib,
   nixpkgs-unfree,
   nixpkgs,
-  private,
   ...
 }:
 let
@@ -182,15 +181,19 @@ in
       defaultText = lib.literalExpression "config.custom.dev.gitBasePackage";
       description = "git wrapper package installed for arnau; override per host.";
     };
+
+    claudeMd = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = "Global CLAUDE.md linked into ~/.claude. Value lives in the private flake.";
+    };
   };
 
   config = lib.mkIf cfg.enable {
     users.users.arnau.packages = devPackages ++ [ cfg.gitPackage ];
 
     # global CLAUDE.md
-    systemd.tmpfiles.rules = [
-      "L+ ${config.users.users.arnau.home}/.claude/CLAUDE.md - - - - ${private + "/CLAUDE.md"}"
-    ];
+    systemd.tmpfiles.rules = lib.optional (cfg.claudeMd != null) "L+ ${config.users.users.arnau.home}/.claude/CLAUDE.md - - - - ${cfg.claudeMd}";
 
     # dev
     programs.direnv.enable = true;

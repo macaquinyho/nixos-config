@@ -2,7 +2,6 @@
   config,
   lib,
   pkgs,
-  private,
   ...
 }:
 let
@@ -21,7 +20,6 @@ in
 
   config = lib.mkIf cfg.enable {
     age.secrets.gitlab-runner = {
-      rekeyFile = /${private}/secrets/age/runner-${config.networking.hostName}.age;
       owner = "gitlab-runner";
       group = "gitlab-runner";
     };

@@ -2,7 +2,6 @@
   config,
   pkgs,
   flake-root,
-  private,
   ...
 }:
 {

@@ -8,7 +8,6 @@ in
     ./virtualisation.nix
     ./common.nix
     ./homelab
-    ./secrets.nix
     ./vfio.nix
     ./waylandWindowManagers.nix
     ./deployment.nix
@@ -19,6 +18,5 @@ in
     ./hetzner.nix
   ];
   custom.common.enable = lib.mkDefault true;
-  custom.secrets.enable = lib.mkDefault true;
 
 }

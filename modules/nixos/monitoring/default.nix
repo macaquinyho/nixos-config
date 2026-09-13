@@ -3,7 +3,6 @@
   lib,
   pkgs,
   self,
-  private,
   ...
 }:
 let
@@ -324,7 +323,6 @@ in
       };
     };
 
-    age.secrets.telegram-bot-token.rekeyFile = /${private}/secrets/age/telegram-bot-token.age;
     systemd.services.alertmanager.serviceConfig.LoadCredential = [
       "telegram-bot-token:${config.age.secrets.telegram-bot-token.path}"
     ];

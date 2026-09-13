@@ -2,7 +2,6 @@
   pkgs,
   lib,
   config,
-  private,
   ...
 }:
 let
@@ -72,13 +71,11 @@ in
     # };
 
     age.secrets.borgnextcloud = {
-      rekeyFile = "${private}/secrets/age/borgnextcloud.age";
       owner = "root";
       group = "root";
     };
 
     age.secrets.borgnextcloud_repokey = {
-      rekeyFile = "${private}/secrets/age/borgnextcloud_repokey.age";
       owner = "root";
       group = "root";
     };

@@ -2,7 +2,6 @@
   config,
   lib,
   pkgs,
-  private,
   self,
   ...
 }:
@@ -50,14 +49,12 @@ in
           hash = "sha256-u3r3KXarewMKk+IRbsIGmqn6oSQeMRnqwvyveYtAyTw=";
         };
       };
-      age.secrets.duckdns.rekeyFile = /${private}/secrets/age/duckdns.age;
 
       systemd.services.caddy.serviceConfig = {
         EnvironmentFile = "${config.age.secrets.duckdns.path}";
       };
     })
     (lib.mkIf cfg.enablevps {
-      age.secrets.tgtg.rekeyFile = "${private}/secrets/age/tgtg.age";
       virtualisation.oci-containers.backend = "docker";
       virtualisation.oci-containers.containers = {
         tgtg = {

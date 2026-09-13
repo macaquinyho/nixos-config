@@ -3,7 +3,6 @@
   pkgs,
   lib,
   flake-root,
-  private,
   self,
   ...
 }:

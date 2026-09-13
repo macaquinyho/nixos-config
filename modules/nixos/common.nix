@@ -2,7 +2,6 @@
   config,
   lib,
   pkgs,
-  private,
   self,
   ...
 }:
@@ -142,7 +141,6 @@ in
           "dialout"
         ];
 
-        hashedPasswordFile = "${private}/secrets/plain/inithashpass";
         shell = pkgs.bash;
       };
       programs.starship.enable = !cfg.cloud.enable;
@@ -160,7 +158,6 @@ in
           enable = true;
           cue = true;
           origin = "pam://arnau";
-          authfile = "${private}/secrets/plain/u2f_keys";
         };
       };
 

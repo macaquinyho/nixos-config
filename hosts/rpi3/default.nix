@@ -3,7 +3,6 @@
   nixpkgs,
   pkgs,
   lib,
-  private,
   self,
   modulesPath,
   ...

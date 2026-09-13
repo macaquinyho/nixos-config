@@ -2,7 +2,6 @@
   config,
   pkgs,
   lib,
-  private,
   nixpkgs,
   modulesPath,
   ...
@@ -75,7 +74,6 @@
   };
 
   age.secrets.tailscale = {
-    rekeyFile = /${private}/secrets/age/tailscale-tag-server.age;
     owner = "root";
     group = "root";
   };

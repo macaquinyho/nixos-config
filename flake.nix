@@ -2,11 +2,10 @@
   description = "Arnau NixOS configs";
 
   inputs = {
-    self.submodules = true;
     self.lfs = true;
 
-    nixpkgs.url = "https://channels.nixos.org/nixos-unstable/nixexprs.tar.xz";
-    nixpkgs-stable.url = "https://channels.nixos.org/nixos-26.05/nixexprs.tar.xz";
+    nixpkgs.url = "https://channels.nixos.org/nixos-unstable/nixexprs.tar.zst";
+    nixpkgs-stable.url = "https://channels.nixos.org/nixos-26.05/nixexprs.tar.zst";
     nixpkgs-master.url = "github:NixOS/nixpkgs/master";
     nixpkgs-unfree.url = "github:numtide/nixpkgs-unfree";
     nixpkgs-unfree.inputs.nixpkgs.follows = "nixpkgs";
@@ -65,12 +64,14 @@
     };
   };
 
+  # Nothing here may reference the private tree: this directory is a subtree of
+  # the private flake and gets published on its own. The private flake consumes
+  # it as a relative path input and assembles the nixosConfigurations.
   outputs =
     {
       self,
       nixpkgs,
       nixpkgs-stable,
-      deploy-rs,
       disko-stable,
       disko,
       agenix,
@@ -84,11 +85,10 @@
       treefmt-nix,
       jail-nix,
       ...
-    }:
+    }@inputs:
     let
       # specialArgs
       flake-root = ./.;
-      private = flake-root + "/private";
 
       stable = {
         nixpkgs = nixpkgs-stable;
@@ -103,63 +103,6 @@
         agenix = agenix;
       };
 
-      hosts = [
-        {
-          host = "oracle1";
-          branch = stable;
-          privateConfigs = true;
-        }
-        {
-          host = "ps42";
-          branch = stable;
-          privateConfigs = true;
-        }
-        {
-          host = "h81";
-          branch = stable;
-          privateConfigs = true;
-        }
-        {
-          host = "b450";
-          branch = stable;
-          privateConfigs = true;
-        }
-        {
-          host = "rpi3";
-          branch = stable;
-          privateConfigs = true;
-        }
-        {
-          host = "ampere";
-          branch = stable;
-          privateConfigs = true;
-        }
-        {
-          host = "potato";
-          branch = stable;
-          privateConfigs = true;
-        }
-        {
-          host = "moniato";
-          branch = stable;
-          privateConfigs = true;
-        }
-        {
-          host = "x550";
-          branch = stable;
-          privateConfigs = true;
-        }
-        {
-          host = "smdltp451";
-          branch = stable;
-          privateConfigs = true;
-        }
-        {
-          host = "vm";
-          branch = stable;
-        }
-      ];
-
       forAllSystems =
         function: nixpkgs':
         nixpkgs'.lib.genAttrs nixpkgs'.lib.systems.flakeExposed (
@@ -171,7 +114,6 @@
       packages = forAllSystems (
         pkgs: system:
         {
-          help-blog = pkgs.callPackage ./packages/blog.nix { };
           nvim-mnw = mnw.lib.wrap pkgs ./modules/neovim.nix;
           mcp-victoriametrics = pkgs.callPackage ./packages/mcp-victoriametrics.nix { };
           claude-code = pkgs.callPackage ./packages/claude-code.nix {
@@ -181,7 +123,6 @@
         }
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           claude-sandbox = pkgs.callPackage ./packages/claude-sandbox.nix {
-            inherit private;
             jail = jail-nix.lib.init pkgs;
             claude-code = self.packages.${system}.claude-code;
             mcp-victoriametrics = self.packages.${system}.mcp-victoriametrics;
@@ -190,16 +131,9 @@
       ) nixpkgs;
 
       checks = forAllSystems (pkgs: system: {
-        pre-commit-check = git-hooks.lib.${system}.run {
+        pre-commit-check = self.lib.mkPreCommitCheck {
+          inherit pkgs system;
           src = ./.;
-          package = pkgs.prek;
-          hooks = {
-            nixfmt.enable = true;
-            deadnix.enable = true;
-            deadnix.settings.noLambdaPatternNames = true;
-            deadnix.settings.noLambdaArg = true;
-            flake-checker.enable = true;
-          };
         };
       }) nixpkgs;
 
@@ -231,92 +165,64 @@
 
       # do not use import keyword for pointing to modules, use the path
       nixosModules.common = ./modules/nixos;
-      nixosModules.private = private + "/modules/nixos";
       overlays = import ./overlays;
 
-      nixosConfigurations =
-        let
-          defaultModules = host: branch: [
-            self.nixosModules.common
-            self.nixosModules.private
-            branch.disko.nixosModules.disko
-            branch.agenix.nixosModules.default
-            agenix-rekey.nixosModules.default
-            wirenix.nixosModules.default
-            preservation.nixosModules.default
-            ./hosts/${host}
-            {
-              nix.registry.nixpkgs-unstable.flake = nixpkgs;
-            }
-          ];
+      lib = {
+        inherit stable unstable;
 
-          mkHostConfig =
-            {
-              host,
-              branch,
-              privateConfigs ? false,
-              ...
-            }:
-            {
-              name = host;
-              value =
-                let
-                  specialArgs = {
-                    inherit
-                      flake-root
-                      private
-                      self
-                      nixpkgs
-                      nixpkgs-unfree
-                      ;
-                  };
-                in
-                branch.nixpkgs.lib.nixosSystem {
-                  inherit specialArgs;
-                  modules =
-                    defaultModules host branch
-                    ++ branch.nixpkgs.lib.optional privateConfigs (private + "/hosts/${host}");
-                  # Include private host config
-                };
+        mkPreCommitCheck =
+          {
+            pkgs,
+            system,
+            src,
+          }:
+          git-hooks.lib.${system}.run {
+            inherit src;
+            package = pkgs.prek;
+            hooks = {
+              nixfmt.enable = true;
+              deadnix.enable = true;
+              deadnix.settings.noLambdaPatternNames = true;
+              deadnix.settings.noLambdaArg = true;
+              flake-checker.enable = true;
             };
-
-        in
-        builtins.listToAttrs (map mkHostConfig hosts);
-
-      agenix-rekey = agenix-rekey.configure {
-        userFlake = self;
-        nixosConfigurations = self.nixosConfigurations;
-      };
-
-      # deploy-rs node configuration stolen from https://github.com/LongerHV/nixos-configuration
-      deploy.nodes =
-        let
-          mkDeployConfig = hostname: configuration: interactiveSudo: remoteBuild: {
-            inherit hostname interactiveSudo remoteBuild;
-            profiles.system =
-              let
-                inherit (configuration.config.nixpkgs.hostPlatform) system;
-              in
-              {
-                path = deploy-rs.lib."${system}".activate.nixos configuration;
-                sshUser = "arnau";
-                user = "root";
-                #interactiveSudo = true;
-                #sshOpts = ["-A"];
-                sshOpts = [
-                  "-o"
-                  "ProxyCommand=none"
-                ];
-                magicRollback = true;
-              };
           };
-        in
-        {
-          h81 = mkDeployConfig "h81" self.nixosConfigurations.h81 false true;
-          rpi3 = mkDeployConfig "rpi3" self.nixosConfigurations.rpi3 false false;
-          oracle1 = mkDeployConfig "oracle1" self.nixosConfigurations.oracle1 false false;
-          ampere = mkDeployConfig "ampere" self.nixosConfigurations.ampere false true;
-        };
-      # checks = builtins.mapAttrs (system: deployLib: deployLib.deployChecks self.deploy) deploy-rs.lib;
+
+        # The blog content lives in the private tree, so the caller passes it in.
+        mkBlog = pkgs: src: pkgs.callPackage ./packages/blog.nix { inherit src; };
+
+        # specialArgs has to carry `private` (the tree holding the secrets and
+        # the host overrides) and `self` (the flake defining the resulting
+        # nixosConfigurations), both of which modules here reach for.
+        mkNixosSystem =
+          {
+            host,
+            branch ? stable,
+            modules ? [ ],
+            specialArgs,
+          }:
+          branch.nixpkgs.lib.nixosSystem {
+            specialArgs = {
+              inherit
+                flake-root
+                nixpkgs
+                nixpkgs-unfree
+                ;
+            } // specialArgs;
+            modules = [
+              self.nixosModules.common
+              branch.disko.nixosModules.disko
+              branch.agenix.nixosModules.default
+              agenix-rekey.nixosModules.default
+              wirenix.nixosModules.default
+              preservation.nixosModules.default
+              ./hosts/${host}
+              {
+                nix.registry.nixpkgs-unstable.flake = nixpkgs;
+              }
+            ]
+            ++ modules;
+          };
+      };
     };
 }

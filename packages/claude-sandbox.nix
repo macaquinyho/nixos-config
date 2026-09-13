@@ -3,7 +3,6 @@
   jail,
   claude-code,
   mcp-victoriametrics,
-  private,
   writeText,
   cacert,
   gost,
@@ -22,6 +21,9 @@
   ripgrep,
   tree,
   uv,
+
+  # Global CLAUDE.md prepended to the sandbox notes; the private flake sets it.
+  claudeMd ? null,
 
   allowedHosts ?
     # https://code.claude.com/docs/en/network-config#network-access-requirements
@@ -80,8 +82,8 @@ let
     }
   );
 
-  claudeMd = writeText "CLAUDE.md" (
-    builtins.readFile (private + "/CLAUDE.md")
+  claudeMdFile = writeText "CLAUDE.md" (
+    lib.optionalString (claudeMd != null) (builtins.readFile claudeMd)
     + ''
 
       ## Sandbox network
@@ -175,7 +177,7 @@ jail "claude-sandbox" claude-code (
     (persist-home "claude-code")
 
     # global CLAUDE.md
-    (bind-pkg (noescape "~/.claude/CLAUDE.md") claudeMd)
+    (bind-pkg (noescape "~/.claude/CLAUDE.md") claudeMdFile)
 
     mount-cwd
 
