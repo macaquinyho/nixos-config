@@ -85,7 +85,7 @@
       treefmt-nix,
       jail-nix,
       ...
-    }@inputs:
+    }:
     let
       # specialArgs
       flake-root = ./.;
@@ -208,7 +208,8 @@
                 nixpkgs
                 nixpkgs-unfree
                 ;
-            } // specialArgs;
+            }
+            // specialArgs;
             modules = [
               self.nixosModules.common
               branch.disko.nixosModules.disko

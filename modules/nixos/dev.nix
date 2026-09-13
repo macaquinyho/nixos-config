@@ -193,7 +193,9 @@ in
     users.users.arnau.packages = devPackages ++ [ cfg.gitPackage ];
 
     # global CLAUDE.md
-    systemd.tmpfiles.rules = lib.optional (cfg.claudeMd != null) "L+ ${config.users.users.arnau.home}/.claude/CLAUDE.md - - - - ${cfg.claudeMd}";
+    systemd.tmpfiles.rules = lib.optional (
+      cfg.claudeMd != null
+    ) "L+ ${config.users.users.arnau.home}/.claude/CLAUDE.md - - - - ${cfg.claudeMd}";
 
     # dev
     programs.direnv.enable = true;
