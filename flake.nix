@@ -62,6 +62,12 @@
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    nix-diff-rs = {
+      url = "github:Mic92/nix-diff-rs";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.treefmt-nix.follows = "treefmt-nix";
+    };
   };
 
   # Nothing here may reference the private tree: this directory is a subtree of
@@ -76,6 +82,7 @@
       git-hooks,
       treefmt-nix,
       jail-nix,
+      nix-diff-rs,
       ...
     }:
     let
@@ -91,6 +98,7 @@
         pkgs: system:
         {
           nvim-mnw = mnw.lib.wrap pkgs ./modules/neovim.nix;
+          nix-diff = nix-diff-rs.packages.${system}.nix-diff;
           mcp-victoriametrics = pkgs.callPackage ./packages/mcp-victoriametrics.nix { };
           claude-code = pkgs.callPackage ./packages/claude-code.nix {
             claude-code = llm-agents.packages.${system}.claude-code;
