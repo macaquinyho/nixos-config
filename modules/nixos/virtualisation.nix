@@ -30,6 +30,7 @@ in
 
     virtualisation = {
       libvirtd = {
+        vhostUserPackages = [ pkgs.virtiofsd ];
         enable = cfg.libvirtd.enable;
         qemu = {
           swtpm.enable = true;
