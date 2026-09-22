@@ -16,6 +16,8 @@ let
     builtins.readFile ./dotfiles/tmux-sessionizer.sh
   );
   sopsPlugins = pkgs.sops.withAgePlugins (p: [ p.age-plugin-fido2-hmac ]);
+  claudeMdFile = pkgs.writeText "CLAUDE.md" cfg.claudeMd;
+  claudeSettingsFile = (pkgs.formats.json { }).generate "claude-settings.json" cfg.claudeSettings;
   devPackages = with pkgs; [
     tmuxsessionizer
     libclang
@@ -183,19 +185,33 @@ in
     };
 
     claudeMd = lib.mkOption {
-      type = lib.types.nullOr lib.types.path;
+      type = lib.types.nullOr lib.types.lines;
       default = null;
-      description = "Global CLAUDE.md linked into ~/.claude. Value lives in the private flake.";
+      description = "Contents of the global ~/.claude/CLAUDE.md. Value lives in the private flake.";
+    };
+
+    claudeSettings = lib.mkOption {
+      type = lib.types.nullOr (lib.types.attrsOf lib.types.anything);
+      default = null;
+      description = ''
+        Contents of the global ~/.claude/settings.json, linked into ~/.claude.
+        Value lives in the private flake. The link is read-only, so /config and
+        /plugin cannot persist changes: edit them here and rebuild instead.
+      '';
     };
   };
 
   config = lib.mkIf cfg.enable {
     users.users.arnau.packages = devPackages ++ [ cfg.gitPackage ];
 
-    # global CLAUDE.md
-    systemd.tmpfiles.rules = lib.optional (
-      cfg.claudeMd != null
-    ) "L+ ${config.users.users.arnau.home}/.claude/CLAUDE.md - - - - ${cfg.claudeMd}";
+    # global CLAUDE.md and settings.json
+    systemd.tmpfiles.rules =
+      lib.optional (
+        cfg.claudeMd != null
+      ) "L+ ${config.users.users.arnau.home}/.claude/CLAUDE.md - - - - ${claudeMdFile}"
+      ++ lib.optional (
+        cfg.claudeSettings != null
+      ) "L+ ${config.users.users.arnau.home}/.claude/settings.json - - - - ${claudeSettingsFile}";
 
     # dev
     programs.direnv.enable = true;
@@ -220,7 +236,11 @@ in
       aspm = "sudo lspci -vv | awk '/ASPM/{print $0}' RS= | grep --color -P '(^[a-z0-9:.]+|ASPM )'";
       grep = "grep --color=auto";
       vimdev = "${self.packages.${pkgs.stdenv.hostPlatform.system}.nvim-mnw.devMode}/bin/nvim";
-      claude = lib.getExe self.packages.${pkgs.stdenv.hostPlatform.system}.claude-sandbox;
+      claude = lib.getExe (
+        self.packages.${pkgs.stdenv.hostPlatform.system}.claude-sandbox.override {
+          inherit (cfg) gitPackage;
+        }
+      );
     };
     environment.sessionVariables = {
       UV_PYTHON_DOWNLOADS = "never";

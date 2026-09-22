@@ -22,8 +22,12 @@
   tree,
   uv,
 
-  # Global CLAUDE.md prepended to the sandbox notes; the private flake sets it.
+  # Global CLAUDE.md text prepended to the sandbox notes. The private flake sets
+  # it.
   claudeMd ? null,
+
+  # the host's configured git wrapper, for user.email inside the jail
+  gitPackage ? git,
 
   allowedHosts ?
     # https://code.claude.com/docs/en/network-config#network-access-requirements
@@ -83,7 +87,7 @@ let
   );
 
   claudeMdFile = writeText "CLAUDE.md" (
-    lib.optionalString (claudeMd != null) (builtins.readFile claudeMd)
+    lib.optionalString (claudeMd != null) claudeMd
     + ''
 
       ## Sandbox network
@@ -227,7 +231,7 @@ jail "claude-sandbox" claude-code (
       coreutils
       fd
       file
-      git
+      gitPackage
       gnugrep
       gnumake
       gnused
