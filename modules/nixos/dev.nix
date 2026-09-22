@@ -238,7 +238,7 @@ in
       vimdev = "${self.packages.${pkgs.stdenv.hostPlatform.system}.nvim-mnw.devMode}/bin/nvim";
       claude = lib.getExe (
         self.packages.${pkgs.stdenv.hostPlatform.system}.claude-sandbox.override {
-          inherit (cfg) gitPackage;
+          inherit (cfg) gitPackage claudeSettings;
         }
       );
     };

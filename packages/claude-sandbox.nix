@@ -25,6 +25,7 @@
   # Global CLAUDE.md text prepended to the sandbox notes. The private flake sets
   # it.
   claudeMd ? null,
+  claudeSettings ? null,
 
   # the host's configured git wrapper, for user.email inside the jail
   gitPackage ? git,
@@ -107,6 +108,8 @@ let
     ''
   );
 
+  claudeSettingsFile = writeText "claude-settings.json" (builtins.toJSON claudeSettings);
+
   bridgeConfig = writeText "claude-sandbox-gost-bridge.json" (
     builtins.toJSON {
       services = [
@@ -184,6 +187,11 @@ jail "claude-sandbox" claude-code (
     (bind-pkg (noescape "~/.claude/CLAUDE.md") claudeMdFile)
 
     mount-cwd
+  ]
+  ++ lib.optional (claudeSettings != null) (
+    bind-pkg (noescape "~/.claude/settings.json") claudeSettingsFile
+  )
+  ++ [
 
     # mount the runtime closure of the dev shell's inputs, if this is a flake
     # with devShells.<system>.default. print-dev-env is still run for the env
