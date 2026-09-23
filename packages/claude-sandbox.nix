@@ -21,6 +21,7 @@
   ripgrep,
   tree,
   uv,
+  nix,
 
   # Global CLAUDE.md text prepended to the sandbox notes. The private flake sets
   # it.
@@ -29,6 +30,11 @@
 
   # the host's configured git wrapper, for user.email inside the jail
   gitPackage ? git,
+
+  # talk to the host nix daemon with the whole store mounted, instead of only
+  # the dev shell closure. Only safe when the user is not a trusted nix user.
+  nixDaemon ? false,
+  nixPackage ? nix,
 
   allowedHosts ?
     # https://code.claude.com/docs/en/network-config#network-access-requirements
@@ -103,9 +109,22 @@ let
       ## Sandbox dev shell
 
       The devShell from this directory's flake.nix, if there is one, is already
-      in the environment. There is no nix here. To reload it, tell me and I'll
-      restart claude.
+      in the environment. To reload it, tell me and I'll restart claude.
     ''
+    + (
+      if nixDaemon then
+        ''
+
+          nix is available and talks to the host daemon, with the whole store
+          readable. Use `nix build`, `nix run` or `nix shell` for tools that aren't
+          in the environment.
+        ''
+      else
+        ''
+
+          There is no nix here.
+        ''
+    )
   );
 
   claudeSettingsFile = writeText "claude-settings.json" (builtins.toJSON claudeSettings);
@@ -193,29 +212,50 @@ jail "claude-sandbox" claude-code (
   )
   ++ [
 
-    # mount the runtime closure of the dev shell's inputs, if this is a flake
-    # with devShells.<system>.default. print-dev-env is still run for the env
-    # vars wrap-entry sources; the mounts come from the devShell derivation's
-    # direct inputs -> their outputs -> runtime requisites, which avoids
-    # scraping store paths out of the print-dev-env script text.
-    (add-runtime ''
-      if nix print-dev-env > "$CLAUDE_RUN_DIR/devenv" 2> /dev/null; then
-        mv "$CLAUDE_RUN_DIR/devenv" "$CLAUDE_RUN_DIR/run/devenv"
-        sys=$(nix eval --raw --impure --expr builtins.currentSystem)
-        if drv=$(nix eval --raw ".#devShells.$sys.default.drvPath" 2> /dev/null); then
-          nix-store --query --references "$drv" \
-            | ${lib.getExe gnugrep} '\.drv$' \
-            | ${findutils}/bin/xargs -r nix-store --query --outputs 2> /dev/null \
-            | sort -u \
-            | while read -r p; do nix-store --query --requisites "$p" 2> /dev/null || true; done \
-            | sort -u \
-            | while read -r p; do printf '%s\0%s\0%s\0' --ro-bind "$p" "$p"; done \
-            > "$CLAUDE_RUN_DIR/binds"
-          exec {CLAUDE_DEV_FD}< "$CLAUDE_RUN_DIR/binds"
-          RUNTIME_ARGS+=(--args "$CLAUDE_DEV_FD")
-        fi
-      fi
-    '')
+  ]
+  ++ (
+    if nixDaemon then
+      [
+        (readonly "/nix/store")
+        (readwrite "/nix/var/nix/daemon-socket")
+        (readonly "/etc/nix")
+        (try-readonly "/etc/static")
+        (set-env "NIX_REMOTE" "daemon")
+        (add-pkg-deps [ nixPackage ])
+        (add-runtime ''
+          if nix print-dev-env > "$CLAUDE_RUN_DIR/devenv" 2> /dev/null; then
+            mv "$CLAUDE_RUN_DIR/devenv" "$CLAUDE_RUN_DIR/run/devenv"
+          fi
+        '')
+      ]
+    else
+      [
+        # mount the runtime closure of the dev shell's inputs, if this is a flake
+        # with devShells.<system>.default. print-dev-env is still run for the env
+        # vars wrap-entry sources; the mounts come from the devShell derivation's
+        # direct inputs -> their outputs -> runtime requisites, which avoids
+        # scraping store paths out of the print-dev-env script text.
+        (add-runtime ''
+          if nix print-dev-env > "$CLAUDE_RUN_DIR/devenv" 2> /dev/null; then
+            mv "$CLAUDE_RUN_DIR/devenv" "$CLAUDE_RUN_DIR/run/devenv"
+            sys=$(nix eval --raw --impure --expr builtins.currentSystem)
+            if drv=$(nix eval --raw ".#devShells.$sys.default.drvPath" 2> /dev/null); then
+              nix-store --query --references "$drv" \
+                | ${lib.getExe gnugrep} '\.drv$' \
+                | ${findutils}/bin/xargs -r nix-store --query --outputs 2> /dev/null \
+                | sort -u \
+                | while read -r p; do nix-store --query --requisites "$p" 2> /dev/null || true; done \
+                | sort -u \
+                | while read -r p; do printf '%s\0%s\0%s\0' --ro-bind "$p" "$p"; done \
+                > "$CLAUDE_RUN_DIR/binds"
+              exec {CLAUDE_DEV_FD}< "$CLAUDE_RUN_DIR/binds"
+              RUNTIME_ARGS+=(--args "$CLAUDE_DEV_FD")
+            fi
+          fi
+        '')
+      ]
+  )
+  ++ [
 
     # if git worktree, mount also the parent
     (add-runtime ''

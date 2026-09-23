@@ -239,6 +239,8 @@ in
       claude = lib.getExe (
         self.packages.${pkgs.stdenv.hostPlatform.system}.claude-sandbox.override {
           inherit (cfg) gitPackage claudeSettings;
+          nixDaemon = !config.custom.common.trustedUser;
+          nixPackage = config.nix.package;
         }
       );
     };

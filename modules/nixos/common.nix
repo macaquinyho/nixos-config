@@ -14,6 +14,11 @@ in
     enable = lib.mkEnableOption "common stuff";
     cloud.enable = lib.mkEnableOption "minimal setup for cloud vms";
     wol.enable = lib.mkEnableOption "Enable Wake On LAN via udev rules";
+    trustedUser = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Whether arnau is a trusted nix user. When off, the claude sandbox gets the nix daemon.";
+    };
   };
 
   config = lib.mkMerge [
@@ -164,7 +169,7 @@ in
       # pam_rssh
       security.pam.rssh.enable = true;
 
-      nix.settings.trusted-users = [ "arnau" ];
+      nix.settings.trusted-users = lib.mkIf cfg.trustedUser [ "arnau" ];
     })
     (lib.mkIf cfg.cloud.enable {
       services.fail2ban = {
