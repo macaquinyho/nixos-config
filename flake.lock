@@ -526,10 +526,11 @@
     },
     "nixpkgs_3": {
       "locked": {
-        "lastModified": 0,
-        "narHash": "sha256-ECni+IkwXjusHsm9Sexdtq8weAq/yUyt1TWIemXt3Ko=",
-        "path": "/nix/store/bi5zxc0v5g6ylygdwyqzh280sccg3ykb-source",
-        "type": "path"
+        "lastModified": 1789844176,
+        "narHash": "sha256-eaRzSAxpJwnr2Imug6prPsN7xhtnk4cj3ZTopGJOgiY=",
+        "rev": "79b35bf0bda5cd110f856aa5b5b2c5ba4460dbf5",
+        "type": "tarball",
+        "url": "https://releases.nixos.org/nixpkgs/nixpkgs-26.11pre1076565.79b35bf0bda5/nixexprs.tar.zst"
       },
       "original": {
         "id": "nixpkgs",
@@ -758,11 +759,11 @@
         "nixpkgs": "nixpkgs_3"
       },
       "locked": {
-        "lastModified": 1721448132,
-        "narHash": "sha256-z+uRqGQgQah40a6wRUKm1QdUlcbMvN3V9IP/OQIZcHA=",
+        "lastModified": 1790037523,
+        "narHash": "sha256-WeipzVVlzfB0HYmB+HNTgPFmYU1OKveg+P3h8tnFMRo=",
         "owner": "~msalerno",
         "repo": "wirenix",
-        "rev": "e6a936d6a9c3e832a133ef72eb1acad1dfbddddd",
+        "rev": "647ea246d0cf6e92ec3807ee5bf752f9ebd52791",
         "type": "sourcehut"
       },
       "original": {
