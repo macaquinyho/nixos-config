@@ -465,20 +465,17 @@
         "type": "github"
       }
     },
-    "nixpkgs-master": {
+    "nixpkgs-small": {
       "locked": {
-        "lastModified": 1786992569,
-        "narHash": "sha256-DruYBCummH+ThchGNQb8JCSZ3O2h4UcRK9WPREHsldg=",
-        "owner": "NixOS",
-        "repo": "nixpkgs",
-        "rev": "cec01fcf26d08a79efa3e2e2cec7c75c51038146",
-        "type": "github"
+        "lastModified": 1790297907,
+        "narHash": "sha256-9VyNsn59P4FTpLNLKf9RNNHytl2sHuIZdlqSrgoeeN4=",
+        "rev": "a5e02ba8b823f3846c2336c7baad299a36a47cdf",
+        "type": "tarball",
+        "url": "https://releases.nixos.org/nixos/unstable-small/nixos-26.11pre1079250.a5e02ba8b823/nixexprs.tar.zst"
       },
       "original": {
-        "owner": "NixOS",
-        "ref": "master",
-        "repo": "nixpkgs",
-        "type": "github"
+        "type": "tarball",
+        "url": "https://channels.nixos.org/nixos-unstable-small/nixexprs.tar.zst"
       }
     },
     "nixpkgs-stable": {
@@ -607,7 +604,7 @@
         "nix-diff-rs": "nix-diff-rs",
         "nix-minecraft": "nix-minecraft",
         "nixpkgs": "nixpkgs_2",
-        "nixpkgs-master": "nixpkgs-master",
+        "nixpkgs-small": "nixpkgs-small",
         "nixpkgs-stable": "nixpkgs-stable",
         "nixpkgs-unfree": "nixpkgs-unfree",
         "preservation": "preservation",
