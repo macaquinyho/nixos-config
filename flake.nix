@@ -135,6 +135,7 @@
             gnused
             jq
             nix
+            nix-eval-jobs
           ];
         };
       }) nixpkgs;
