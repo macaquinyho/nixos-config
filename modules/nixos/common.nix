@@ -3,6 +3,7 @@
   lib,
   pkgs,
   self,
+  nixpkgs,
   ...
 }:
 let
@@ -96,6 +97,10 @@ in
 
       # Allow unfree packages
       nixpkgs.config.allowUnfree = true;
+      # https://github.com/NixOS/nixpkgs/pull/539560
+      services.immich.package =
+        lib.mkDefault
+          nixpkgs.legacyPackages.${pkgs.stdenv.hostPlatform.system}.immich;
 
       # List packages installed in system profile. To search, run:
       # $ nix search wget
