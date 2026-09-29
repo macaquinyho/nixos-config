@@ -49,6 +49,12 @@
       inputs.flake-compat.follows = "";
     };
 
+    nix-post-build-hook-queue = {
+      url = "github:newAM/nix-post-build-hook-queue";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.treefmt.follows = "";
+    };
+
     wirenix.url = "sourcehut:~msalerno/wirenix";
     mnw.url = "github:Gerg-L/mnw";
     wrappers.url = "github:lassulus/wrappers";
