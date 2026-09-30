@@ -392,27 +392,6 @@
         "type": "github"
       }
     },
-    "nix-post-build-hook-queue": {
-      "inputs": {
-        "nixpkgs": [
-          "nixpkgs"
-        ],
-        "treefmt": []
-      },
-      "locked": {
-        "lastModified": 1790600542,
-        "narHash": "sha256-my0u5Ji8TJ18bJip2hQ9TV+qjHa/EcCBR2iOBglYiIM=",
-        "owner": "newAM",
-        "repo": "nix-post-build-hook-queue",
-        "rev": "ad2008651e51df6ae969a7c4bf592cf97f301ef9",
-        "type": "github"
-      },
-      "original": {
-        "owner": "newAM",
-        "repo": "nix-post-build-hook-queue",
-        "type": "github"
-      }
-    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1790055231,
@@ -567,7 +546,6 @@
         "llm-agents": "llm-agents",
         "mnw": "mnw",
         "nix-minecraft": "nix-minecraft",
-        "nix-post-build-hook-queue": "nix-post-build-hook-queue",
         "nixpkgs": "nixpkgs_2",
         "nixpkgs-small": "nixpkgs-small",
         "nixpkgs-stable": "nixpkgs-stable",
