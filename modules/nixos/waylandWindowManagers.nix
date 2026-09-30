@@ -102,14 +102,14 @@ let
         inherit lib;
         wlib = wrappers.lib;
       }).apply
-      {
-        inherit pkgs;
-        configFile.content = ''
-          timeout ${toString (15 * 60)} '${lib.getExe swaylockWrapped}'
-          before-sleep '${lib.getExe swaylockWrapped}'
-          lock '${lib.getExe swaylockWrapped}'
-        '';
-      }
+        {
+          inherit pkgs;
+          configFile.content = ''
+            timeout ${toString (15 * 60)} '${lib.getExe swaylockWrapped}'
+            before-sleep '${lib.getExe swaylockWrapped}'
+            lock '${lib.getExe swaylockWrapped}'
+          '';
+        }
     ).wrapper;
   set-wallpaper = pkgs.writeShellApplication {
     name = "set-wallpaper";
