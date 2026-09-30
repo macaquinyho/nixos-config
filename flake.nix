@@ -76,6 +76,7 @@
       git-hooks,
       treefmt-nix,
       jail-nix,
+      nixpkgs-stable,
       ...
     }:
     let
@@ -92,6 +93,8 @@
         {
           nvim-mnw = mnw.lib.wrap pkgs ./modules/neovim.nix;
           mcp-victoriametrics = pkgs.callPackage ./packages/mcp-victoriametrics.nix { };
+          # the hosts are on stable, and the plugin hash depends on caddy's version
+          caddy-with-plugins = nixpkgs-stable.legacyPackages.${system}.callPackage ./packages/caddy { };
           claude-code = pkgs.callPackage ./packages/claude-code.nix {
             claude-code = llm-agents.packages.${system}.claude-code;
             mcp-victoriametrics = self.packages.${system}.mcp-victoriametrics;
@@ -129,6 +132,7 @@
             jq
             nix
             nix-eval-jobs
+            nix-update
           ];
         };
       }) nixpkgs;
