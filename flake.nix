@@ -134,7 +134,6 @@
             nix
             nix-eval-jobs
             nix-update
-            nixos-rebuild-ng
             openssh
           ];
         };
