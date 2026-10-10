@@ -38,9 +38,17 @@ in
       description = "Username for accesing this host via SSH";
 
     };
+    ciPublicKeyFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = "Public key the CI deploy job logs in with";
+    };
   };
 
   config = lib.mkIf cfg.enable {
+    users.users.${cfg.user}.openssh.authorizedKeys.keyFiles = lib.optional (
+      cfg.ciPublicKeyFile != null
+    ) cfg.ciPublicKeyFile;
 
     # home-manager.users.arnau.config.
     # users.users.arnau.openssh.authorizedKeys =

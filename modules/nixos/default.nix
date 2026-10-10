@@ -11,6 +11,7 @@ in
     ./vfio.nix
     ./waylandWindowManagers.nix
     ./deployment.nix
+    ./ci-updates.nix
     ./dev.nix
     ./gitlab-runner.nix
     ./monitoring

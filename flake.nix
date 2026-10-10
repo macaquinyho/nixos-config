@@ -93,6 +93,7 @@
         {
           nvim-mnw = mnw.lib.wrap pkgs ./modules/neovim.nix;
           mcp-victoriametrics = pkgs.callPackage ./packages/mcp-victoriametrics.nix { };
+          nixos-ci-update = pkgs.callPackage ./packages/nixos-ci-update { };
           # the hosts are on stable, and the plugin hash depends on caddy's version
           caddy-with-plugins = nixpkgs-stable.legacyPackages.${system}.callPackage ./packages/caddy { };
           claude-code = pkgs.callPackage ./packages/claude-code.nix {
@@ -133,6 +134,8 @@
             nix
             nix-eval-jobs
             nix-update
+            nixos-rebuild-ng
+            openssh
           ];
         };
       }) nixpkgs;
