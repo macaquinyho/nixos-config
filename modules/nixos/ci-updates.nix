@@ -57,6 +57,8 @@ in
 
     systemd.user.services.nixos-ci-tray = {
       unitConfig.ConditionUser = cfg.user;
+      # inherit the session's PATH, which the terminals it opens need
+      environment.PATH = lib.mkForce null;
       wantedBy = [ "graphical-session.target" ];
       partOf = [ "graphical-session.target" ];
       after = [ "graphical-session.target" ];

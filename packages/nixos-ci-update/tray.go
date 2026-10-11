@@ -148,12 +148,12 @@ func (t *tray) switchTo() error {
 }
 
 func (t *tray) inTerminal(args ...string) {
-	cmd := exec.Command(t.cfg.Terminal, args...)
-	if err := cmd.Start(); err != nil {
-		log.Print(err)
-		return
-	}
-	go cmd.Wait()
+	go func() {
+		out, err := exec.Command(t.cfg.Terminal, args...).CombinedOutput()
+		if err != nil {
+			log.Printf("%s %v: %v: %s", t.cfg.Terminal, args, err, out)
+		}
+	}()
 }
 
 func onClick(item *systray.MenuItem, f func()) {
