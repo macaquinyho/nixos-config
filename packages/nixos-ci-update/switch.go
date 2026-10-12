@@ -73,7 +73,8 @@ func switchTo(hash string) error {
 	if err := run("nix", "store", "verify", "--no-contents", "--sigs-needed", "1", matches[0]); err != nil {
 		return err
 	}
-	return run("nixos-rebuild", "switch", "--store-path", matches[0])
+	// without --no-reexec it rebuilds itself from <nixpkgs/nixos>, absent on flake hosts
+	return run("nixos-rebuild", "switch", "--no-reexec", "--store-path", matches[0])
 }
 
 func run(name string, args ...string) error {
