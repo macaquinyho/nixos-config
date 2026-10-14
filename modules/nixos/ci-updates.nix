@@ -2,7 +2,6 @@
   config,
   lib,
   pkgs,
-  self,
   ...
 }:
 let
@@ -49,11 +48,6 @@ in
   config = lib.mkIf cfg.enable {
     age.secrets.gitlab-read-token.owner = cfg.user;
     xdg.terminal-exec.enable = true;
-
-    environment.etc."nixos-ci-update/system.json".text = builtins.toJSON {
-      rev = config.system.configurationRevision;
-      date = self.lastModified or 0;
-    };
 
     systemd.user.services.nixos-ci-tray = {
       unitConfig.ConditionUser = cfg.user;

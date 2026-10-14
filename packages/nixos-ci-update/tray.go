@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -16,47 +15,52 @@ import (
 type tray struct {
 	cfg *config
 
-	mu     sync.Mutex
-	latest *build
-	busy   string // what's running, or the last error
-	ready  string // the system downloaded and diffed, waiting to be switched to
+	mu      sync.Mutex
+	latest  *build
+	running *build // nil when CI never built the current system
+	checked string // the current system when last checked
+	busy    string // what's running, or the last error
+	ready   string // the system downloaded and diffed, waiting to be switched to
 
-	status, running, latestItem  *systray.MenuItem
-	download, changes, switchNow *systray.MenuItem
+	status, runningItem, latestItem *systray.MenuItem
+	download, changes, switchNow    *systray.MenuItem
 }
 
-// running is the rev and date of the booted configuration, written to /etc by the NixOS module.
-func running() string {
-	var sys struct {
-		Rev  string `json:"rev"`
-		Date int64  `json:"date"`
-	}
-	data, err := os.ReadFile("/etc/nixos-ci-update/system.json")
-	if err != nil || json.Unmarshal(data, &sys) != nil {
-		return "unknown"
-	}
-	return fmt.Sprintf("%.10s (%s)", sys.Rev, time.Unix(sys.Date, 0).Format("2006-01-02 15:04"))
+func currentSystem() string {
+	current, _ := filepath.EvalSymlinks("/run/current-system")
+	return current
+}
+
+func describe(b *build) string {
+	return fmt.Sprintf("%.10s (%s)", b.Rev, b.Date.Format("2006-01-02 15:04"))
 }
 
 func (t *tray) render() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	current, _ := filepath.EvalSymlinks("/run/current-system")
+	current := currentSystem()
 
 	title := "Not checked yet"
+	running := "Running: unknown"
 	latest := "Latest: unknown"
 	available, ready := false, false
-	if t.latest != nil {
-		latest = fmt.Sprintf("Latest: %.10s (%s)", t.latest.Rev, t.latest.Date.Format("2006-01-02 15:04"))
+	if t.latest != nil && t.checked == current {
+		latest = "Latest: " + describe(t.latest)
 		available = t.latest.Path != current
 		ready = available && t.ready == t.latest.Path
 		switch {
 		case !available:
 			title = "Up to date"
+		case t.running == nil:
+			title = "Running a build CI didn't make: push, rebase or wait for CI"
+			running = "Running: local build"
 		case ready:
 			title = "Ready to switch"
 		default:
 			title = "Update available"
+		}
+		if t.running != nil {
+			running = "Running: " + describe(t.running)
 		}
 	}
 	if t.busy != "" {
@@ -68,9 +72,9 @@ func (t *tray) render() {
 	} else {
 		systray.SetIconName("nix-snowflake-white")
 	}
-	systray.SetTooltip(title + "\nRunning: " + running() + "\n" + latest)
+	systray.SetTooltip(title + "\n" + running + "\n" + latest)
 	t.status.SetTitle(title)
-	t.running.SetTitle("Running: " + running())
+	t.runningItem.SetTitle(running)
 	t.latestItem.SetTitle(latest)
 	setEnabled(t.download, available && !ready)
 	setEnabled(t.changes, ready)
@@ -105,12 +109,13 @@ func (t *tray) do(label string, action func() error) {
 }
 
 func (t *tray) check() error {
-	b, err := latestBuild(t.cfg)
+	current := currentSystem()
+	latest, running, err := builds(t.cfg, current)
 	if err != nil {
 		return err
 	}
 	t.mu.Lock()
-	t.latest = b
+	t.latest, t.running, t.checked = latest, running, current
 	t.mu.Unlock()
 	return nil
 }
@@ -125,8 +130,7 @@ func (t *tray) downloadAndDiff() error {
 	if out, err := exec.Command(t.cfg.NixStore, "--realise", path).CombinedOutput(); err != nil {
 		return fmt.Errorf("downloading: %s", out)
 	}
-	current, _ := filepath.EvalSymlinks("/run/current-system")
-	diff, err := exec.Command(t.cfg.Dix, "--color", "always", current, path).Output()
+	diff, err := exec.Command(t.cfg.Dix, "--color", "always", currentSystem(), path).Output()
 	if err != nil {
 		return fmt.Errorf("dix: %w", err)
 	}
@@ -174,7 +178,7 @@ func runTray(cfg *config) {
 			item.Disable()
 			return item
 		}
-		t.status, t.running, t.latestItem = info(), info(), info()
+		t.status, t.runningItem, t.latestItem = info(), info(), info()
 		systray.AddSeparator()
 		checkNow := systray.AddMenuItem("Check now", "")
 		t.download = systray.AddMenuItem("Download and show changes", "")
@@ -199,7 +203,12 @@ func runTray(cfg *config) {
 		go func() {
 			// picks up a switch done outside the tray
 			for range time.Tick(time.Minute) {
-				t.render()
+				t.mu.Lock()
+				stale := t.latest != nil && t.busy == "" && t.checked != currentSystem()
+				t.mu.Unlock()
+				if stale {
+					t.do("Checking…", t.check)
+				}
 			}
 		}()
 	}, nil)

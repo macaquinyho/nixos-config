@@ -20,44 +20,45 @@ import (
 // CI adds a note to every commit it builds, with a "host /nix/store/..." line per host.
 const notesRef = plumbing.ReferenceName("refs/notes/ci")
 
-// build is the newest commit on the branch that CI built.
+// build is a commit on the branch that CI built for this host.
 type build struct {
 	Rev  string
 	Date time.Time
 	Path string
 }
 
-// latestBuild fetches only the notes and the branch's last 50 commit objects, no files.
-func latestBuild(cfg *config) (*build, error) {
+// builds returns the newest build and the newest one of the current system, nil if CI never built it.
+// It fetches only the notes and the branch's last 50 commit objects, no files.
+func builds(cfg *config, current string) (latest, running *build, err error) {
 	token, err := os.ReadFile(cfg.TokenFile)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	auth := &githttp.BasicAuth{Username: cfg.TokenUser, Password: strings.TrimSpace(string(token))}
 	ep, err := transport.NewEndpoint(strings.TrimPrefix(cfg.RepoURL, "git+"))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	sess, err := githttp.DefaultClient.NewUploadPackSession(ep, auth)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer sess.Close()
 	adv, err := sess.AdvertisedReferences()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	refs, err := adv.AllReferences()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	tip, ok := refs[plumbing.NewBranchReferenceName(cfg.Branch)]
 	if !ok {
-		return nil, fmt.Errorf("no branch %s", cfg.Branch)
+		return nil, nil, fmt.Errorf("no branch %s", cfg.Branch)
 	}
 	notesTip, ok := refs[notesRef]
 	if !ok {
-		return nil, fmt.Errorf("CI hasn't noted any build yet")
+		return nil, nil, fmt.Errorf("CI hasn't noted any build yet")
 	}
 
 	st := memory.NewStorage()
@@ -81,39 +82,56 @@ func latestBuild(cfg *config) (*build, error) {
 		return packfile.UpdateObjectStorage(st, resp)
 	}
 	if err := fetch(notesTip.Hash(), 1, ""); err != nil {
-		return nil, fmt.Errorf("fetching the notes: %w", err)
+		return nil, nil, fmt.Errorf("fetching the notes: %w", err)
 	}
 	if err := fetch(tip.Hash(), 50, packp.FilterTreeDepth(0)); err != nil {
-		return nil, fmt.Errorf("fetching %s: %w", cfg.Branch, err)
+		return nil, nil, fmt.Errorf("fetching %s: %w", cfg.Branch, err)
 	}
 
 	notesCommit, err := object.GetCommit(st, notesTip.Hash())
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	notesTree, err := notesCommit.Tree()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	for h := tip.Hash(); ; {
+	for h := tip.Hash(); running == nil; {
 		c, err := object.GetCommit(st, h)
 		if err != nil {
-			return nil, fmt.Errorf("no build in the last 50 commits")
+			if latest == nil {
+				return nil, nil, fmt.Errorf("no build in the last 50 commits")
+			}
+			break
 		}
 		// notes are stored as files named after the commit, possibly split in fanout directories
 		if note, err := findNote(notesTree, h); err == nil {
 			for _, line := range strings.Split(note, "\n") {
-				if host, path, _ := strings.Cut(line, " "); host == cfg.Host {
-					return &build{Rev: h.String(), Date: c.Committer.When, Path: path}, nil
+				host, path, _ := strings.Cut(line, " ")
+				if host != cfg.Host {
+					continue
+				}
+				b := &build{Rev: h.String(), Date: c.Committer.When, Path: path}
+				if latest == nil {
+					latest = b
+				}
+				if path == current {
+					running = b
 				}
 			}
-			return nil, fmt.Errorf("CI built %s without %s", h.String()[:10], cfg.Host)
+			if latest == nil {
+				return nil, nil, fmt.Errorf("CI built %s without %s", h.String()[:10], cfg.Host)
+			}
 		}
 		if len(c.ParentHashes) == 0 {
-			return nil, fmt.Errorf("no build on %s", cfg.Branch)
+			if latest == nil {
+				return nil, nil, fmt.Errorf("no build on %s", cfg.Branch)
+			}
+			break
 		}
 		h = c.ParentHashes[0]
 	}
+	return latest, running, nil
 }
 
 func findNote(tree *object.Tree, commit plumbing.Hash) (string, error) {
