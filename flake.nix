@@ -94,6 +94,7 @@
           nvim-mnw = mnw.lib.wrap pkgs ./modules/neovim.nix;
           mcp-victoriametrics = pkgs.callPackage ./packages/mcp-victoriametrics.nix { };
           nixos-ci-update = pkgs.callPackage ./packages/nixos-ci-update { };
+          claude-sandbox-proxy = pkgs.callPackage ./packages/claude-sandbox-proxy { };
           # the hosts are on stable, and the plugin hash depends on caddy's version
           caddy-with-plugins = nixpkgs-stable.legacyPackages.${system}.callPackage ./packages/caddy { };
           claude-code = pkgs.callPackage ./packages/claude-code.nix {
@@ -104,6 +105,7 @@
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           claude-sandbox = pkgs.callPackage ./packages/claude-sandbox.nix {
             jail = jail-nix.lib.init pkgs;
+            claude-sandbox-proxy = self.packages.${system}.claude-sandbox-proxy;
             claude-code = self.packages.${system}.claude-code;
             mcp-victoriametrics = self.packages.${system}.mcp-victoriametrics;
           };

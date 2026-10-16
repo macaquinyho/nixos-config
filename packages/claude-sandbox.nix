@@ -5,11 +5,12 @@
   mcp-victoriametrics,
   writeText,
   cacert,
-  gost,
+  claude-sandbox-proxy,
   gnugrep,
   findutils,
   bash,
   coreutils,
+  curl,
   fd,
   file,
   git,
@@ -22,6 +23,8 @@
   tree,
   uv,
   nix,
+  writers,
+  python3Packages,
 
   # Global CLAUDE.md text prepended to the sandbox notes. The private flake sets
   # it.
@@ -69,29 +72,8 @@ let
   proxyPort = 3128;
   proxyUrl = "http://127.0.0.1:${toString proxyPort}";
   runDir = "/run/claude-sandbox";
-  proxySocket = "${runDir}/proxy.sock";
+  proxyDir = "/run/claude-sandbox-proxy";
   devEnvFile = "${runDir}/devenv";
-
-  proxyConfig = writeText "claude-sandbox-gost.json" (
-    builtins.toJSON {
-      services = [
-        {
-          name = "claude-sandbox";
-          addr = "proxy.sock";
-          bypass = "allowed-hosts";
-          handler.type = "auto";
-          listener.type = "unix";
-        }
-      ];
-      bypasses = [
-        {
-          name = "allowed-hosts";
-          whitelist = true;
-          matchers = allowedHosts;
-        }
-      ];
-    }
-  );
 
   claudeMdFile = writeText "CLAUDE.md" (
     lib.optionalString (claudeMd != null) claudeMd
@@ -105,6 +87,12 @@ let
       ${lib.concatMapStrings (host: "- ${lib.removeSuffix ":443" host}\n") allowedHosts}
       Anything else gets `CONNECT tunnel failed, response 403`. Retrying won't
       help. Ask me to allow the domain.
+
+      The same proxy speaks SOCKS5 for tools that need it:
+      `socks5h://127.0.0.1:${toString proxyPort}`, or directly on the unix socket
+      `${proxyDir}/proxy.sock` for clients that support it (curl:
+      `socks5h://localhost${proxyDir}/proxy.sock`). Use socks5h, there is no DNS
+      in the sandbox.
 
       ## Sandbox dev shell
 
@@ -129,25 +117,20 @@ let
 
   claudeSettingsFile = writeText "claude-settings.json" (builtins.toJSON claudeSettings);
 
-  bridgeConfig = writeText "claude-sandbox-gost-bridge.json" (
-    builtins.toJSON {
-      services = [
-        {
-          name = "claude-sandbox-bridge";
-          addr = "127.0.0.1:${toString proxyPort}";
-          handler.type = "tcp";
-          listener.type = "tcp";
-          forwarder.nodes = [
-            {
-              name = "proxy";
-              addr = proxySocket;
-              network = "unix";
-            }
-          ];
-        }
-      ];
-    }
-  );
+  proxyExe = lib.getExe claude-sandbox-proxy;
+  ensureProxy = writers.writePython3 "claude-sandbox-ensure-proxy" {
+    libraries = [ python3Packages.jeepney ];
+    flakeIgnore = [ "E501" ];
+  } (builtins.readFile ./claude-sandbox-proxy/ensure-proxy.py);
+  proxyUnit = "claude-sandbox-proxy";
+  # tells a running proxy from an older build apart, so it gets replaced
+  proxyDescription = "claude-sandbox proxy ${
+    builtins.substring 0 8 (
+      builtins.hashString "sha256" (
+        builtins.unsafeDiscardStringContext "${proxyExe} ${toString allowedHosts}"
+      )
+    )
+  }";
 
 in
 jail "claude-sandbox" claude-code (
@@ -165,22 +148,24 @@ jail "claude-sandbox" claude-code (
     (add-runtime ''
       CLAUDE_RUN_DIR=$(mktemp -d)
       mkdir "$CLAUDE_RUN_DIR/run"
-      (cd "$CLAUDE_RUN_DIR/run" && exec ${lib.getExe gost} -C ${proxyConfig}) \
-        > "$CLAUDE_RUN_DIR/log" 2>&1 &
-      CLAUDE_PROXY_PID=$!
+
+      CLAUDE_PROXY_DIR="''${XDG_RUNTIME_DIR:?}/claude-sandbox-proxy"
+      mkdir -p "$CLAUDE_PROXY_DIR"
+      ${ensureProxy} ${proxyUnit} ${lib.escapeShellArg proxyDescription} "$CLAUDE_PROXY_DIR/proxy.sock" \
+        ${proxyExe} serve ${lib.escapeShellArgs allowedHosts}
+
+      exec {CLAUDE_LOG_FD}> >(exec ${proxyExe} journal "claude-sandbox-bridge@$PWD")
+      RUNTIME_ARGS+=(--setenv CLAUDE_SANDBOX_LOG_FD "$CLAUDE_LOG_FD")
     '')
     (add-cleanup ''
-      if [ -n "''${CLAUDE_PROXY_PID-}" ]; then
-        kill "$CLAUDE_PROXY_PID" 2>/dev/null || true
-      fi
       if [ -n "''${CLAUDE_RUN_DIR-}" ]; then
         rm -rf "$CLAUDE_RUN_DIR"
       fi
     '')
     (rw-bind (noescape "\"$CLAUDE_RUN_DIR/run\"") runDir)
+    (ro-bind (noescape "\"$CLAUDE_PROXY_DIR\"") proxyDir)
 
     (wrap-entry (entry: ''
-      ${lib.getExe gost} -C ${bridgeConfig} 2>/dev/null &
       if [ -r ${devEnvFile} ]; then
         # print-dev-env saves PATH and appends it back, so the jail's own
         # tools survive the dev shell's
@@ -189,7 +174,7 @@ jail "claude-sandbox" claude-code (
         . ${devEnvFile}
         set -u
       fi
-      exec ${entry}
+      exec ${proxyExe} bridge 127.0.0.1:${toString proxyPort} ${proxyDir}/proxy.sock -- ${entry}
     ''))
     (set-env "HTTP_PROXY" proxyUrl)
     (set-env "HTTPS_PROXY" proxyUrl)
@@ -277,6 +262,7 @@ jail "claude-sandbox" claude-code (
       mcp-victoriametrics
       bash
       coreutils
+      curl
       fd
       file
       gitPackage
