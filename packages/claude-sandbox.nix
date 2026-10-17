@@ -65,6 +65,7 @@
 
     ++ [
       "vmetrics.oxigen.smd.dev:443" # victoriametrics MCP server target
+      "gitlab.com:443" # GitLab MCP endpoint
     ],
 }:
 # Claude Code confined to the directory it is started in
