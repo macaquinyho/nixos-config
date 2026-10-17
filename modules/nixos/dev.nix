@@ -199,6 +199,19 @@ in
         /plugin cannot persist changes: edit them here and rebuild instead.
       '';
     };
+
+    claudeMcpServers = lib.mkOption {
+      type = lib.types.attrsOf (lib.types.attrsOf lib.types.anything);
+      default = { };
+      description = "MCP servers added to the claude sandbox's built-in ones.";
+    };
+
+    claudeAllowedHosts = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [ "gitlab.example.com:443" ];
+      description = "HOST:PORT entries added to the claude sandbox's egress allowlist.";
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -239,6 +252,8 @@ in
       claude = lib.getExe (
         self.packages.${pkgs.stdenv.hostPlatform.system}.claude-sandbox.override {
           inherit (cfg) gitPackage claudeSettings;
+          extraMcpServers = cfg.claudeMcpServers;
+          extraAllowedHosts = cfg.claudeAllowedHosts;
           nixDaemon = !config.custom.common.trustedUser;
           nixPackage = config.nix.package;
         }

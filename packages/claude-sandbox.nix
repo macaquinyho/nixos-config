@@ -67,9 +67,12 @@
       "vmetrics.oxigen.smd.dev:443" # victoriametrics MCP server target
       "gitlab.com:443" # GitLab MCP endpoint
     ],
+  extraAllowedHosts ? [ ],
+  extraMcpServers ? { },
 }:
 # Claude Code confined to the directory it is started in
 let
+  hosts = allowedHosts ++ extraAllowedHosts;
   proxyPort = 3128;
   proxyUrl = "http://127.0.0.1:${toString proxyPort}";
   runDir = "/run/claude-sandbox";
@@ -85,7 +88,7 @@ let
       Egress goes through a proxy. Only these hosts are reachable, on port 443,
       and a leading dot covers subdomains:
 
-      ${lib.concatMapStrings (host: "- ${lib.removeSuffix ":443" host}\n") allowedHosts}
+      ${lib.concatMapStrings (host: "- ${lib.removeSuffix ":443" host}\n") hosts}
       Anything else gets `CONNECT tunnel failed, response 403`. Retrying won't
       help. Ask me to allow the domain.
 
@@ -127,14 +130,12 @@ let
   # tells a running proxy from an older build apart, so it gets replaced
   proxyDescription = "claude-sandbox proxy ${
     builtins.substring 0 8 (
-      builtins.hashString "sha256" (
-        builtins.unsafeDiscardStringContext "${proxyExe} ${toString allowedHosts}"
-      )
+      builtins.hashString "sha256" (builtins.unsafeDiscardStringContext "${proxyExe} ${toString hosts}")
     )
   }";
 
 in
-jail "claude-sandbox" claude-code (
+jail "claude-sandbox" (claude-code.override { inherit extraMcpServers; }) (
   with jail.combinators;
   [
 
@@ -153,7 +154,7 @@ jail "claude-sandbox" claude-code (
       CLAUDE_PROXY_DIR="''${XDG_RUNTIME_DIR:?}/claude-sandbox-proxy"
       mkdir -p "$CLAUDE_PROXY_DIR"
       ${ensureProxy} ${proxyUnit} ${lib.escapeShellArg proxyDescription} "$CLAUDE_PROXY_DIR/proxy.sock" \
-        ${proxyExe} serve ${lib.escapeShellArgs allowedHosts}
+        ${proxyExe} serve ${lib.escapeShellArgs hosts}
 
       exec {CLAUDE_LOG_FD}> >(exec ${proxyExe} journal "claude-sandbox-bridge@$PWD")
       RUNTIME_ARGS+=(--setenv CLAUDE_SANDBOX_LOG_FD "$CLAUDE_LOG_FD")
