@@ -66,6 +66,7 @@
     ++ [
       "vmetrics.oxigen.smd.dev:443" # victoriametrics MCP server target
       "gitlab.com:443" # GitLab MCP endpoint
+      "api.githubcopilot.com:443" # GitHub MCP endpoint
     ],
   extraAllowedHosts ? [ ],
   extraMcpServers ? { },
@@ -280,5 +281,12 @@ jail "claude-sandbox" (claude-code.override { inherit extraMcpServers; }) (
     ])
 
     (try-fwd-env "COLORTERM")
+    # point claude at another Anthropic-compatible endpoint, e.g. a local llama-server
+    (try-fwd-env "ANTHROPIC_BASE_URL")
+    (try-fwd-env "ANTHROPIC_AUTH_TOKEN")
+    (try-fwd-env "ANTHROPIC_MODEL")
+    (try-fwd-env "ANTHROPIC_DEFAULT_OPUS_MODEL")
+    (try-fwd-env "ANTHROPIC_DEFAULT_SONNET_MODEL")
+    (try-fwd-env "ANTHROPIC_DEFAULT_HAIKU_MODEL")
   ]
 )
