@@ -608,7 +608,7 @@ window-rule {
 }
 workspace ""
 window-rule {
-    match app-id=r#"chrome-hnpfjngllnobngcgfapefoaidbinmjnm-Default|chrome-fmgjjmmmlfnkbppncabfkddbjimcfncm-Default|discord"#
+    match app-id=r#"chrome-hnpfjngllnobngcgfapefoaidbinmjnm-Default|chrome-fmgjjmmmlfnkbppncabfkddbjimcfncm-Default|discord|thunderbird"#
     open-on-workspace ""
 }
 
