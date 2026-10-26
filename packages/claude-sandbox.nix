@@ -14,6 +14,7 @@
   fd,
   file,
   git,
+  git-lfs,
   gnumake,
   gnused,
   jq,
@@ -259,6 +260,8 @@ jail "claude-sandbox" (claude-code.override { inherit extraMcpServers; }) (
 
     # claude reaches for /bin/bash for its shell tool
     (ro-bind "${bash}/bin/bash" "/bin/bash")
+    # for #!/usr/bin/env shebangs (prek hooks)
+    (ro-bind "${coreutils}/bin/env" "/usr/bin/env")
     (set-env "SHELL" "/bin/bash")
 
     (add-pkg-deps [
@@ -269,6 +272,7 @@ jail "claude-sandbox" (claude-code.override { inherit extraMcpServers; }) (
       fd
       file
       gitPackage
+      git-lfs
       gnugrep
       gnumake
       gnused

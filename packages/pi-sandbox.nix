@@ -13,6 +13,7 @@
   fd,
   file,
   git,
+  git-lfs,
   gnumake,
   gnused,
   jq,
@@ -231,6 +232,8 @@ jail "pi-sandbox" pi (
 
     # pi's bash tool runs /bin/bash
     (ro-bind "${bash}/bin/bash" "/bin/bash")
+    # for #!/usr/bin/env shebangs (prek hooks)
+    (ro-bind "${coreutils}/bin/env" "/usr/bin/env")
     (set-env "SHELL" "/bin/bash")
 
     (add-pkg-deps [
@@ -240,6 +243,7 @@ jail "pi-sandbox" pi (
       fd
       file
       gitPackage
+      git-lfs
       gnugrep
       gnumake
       gnused
