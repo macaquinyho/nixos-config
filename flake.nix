@@ -109,6 +109,11 @@
             claude-code = self.packages.${system}.claude-code;
             mcp-victoriametrics = self.packages.${system}.mcp-victoriametrics;
           };
+          pi-sandbox = pkgs.callPackage ./packages/pi-sandbox.nix {
+            jail = jail-nix.lib.init pkgs;
+            claude-sandbox-proxy = self.packages.${system}.claude-sandbox-proxy;
+            pi = llm-agents.packages.${system}.pi;
+          };
         }
       ) nixpkgs;
 

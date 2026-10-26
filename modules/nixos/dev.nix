@@ -258,6 +258,13 @@ in
           nixPackage = config.nix.package;
         }
       );
+      pi = lib.getExe (
+        self.packages.${pkgs.stdenv.hostPlatform.system}.pi-sandbox.override {
+          inherit (cfg) gitPackage;
+          nixDaemon = !config.custom.common.trustedUser;
+          nixPackage = config.nix.package;
+        }
+      );
     };
     environment.sessionVariables = {
       UV_PYTHON_DOWNLOADS = "never";
