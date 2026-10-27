@@ -33,6 +33,9 @@
   # Contents of ~/.pi/agent/models.json, linked read-only.
   piModels ? null,
 
+  # llama.cpp router URL for pi's built-in llama.cpp provider.
+  llamaBaseUrl ? null,
+
   # the host's configured git wrapper, for user.email inside the jail
   gitPackage ? git,
 
@@ -189,6 +192,7 @@ jail "pi-sandbox" pi (
 
     mount-cwd
   ]
+  ++ lib.optional (llamaBaseUrl != null) (set-env "LLAMA_BASE_URL" llamaBaseUrl)
   ++ lib.optional (piModels != null) (bind-pkg (noescape "~/.pi/agent/models.json") piModelsFile)
   ++ [ (bind-pkg (noescape "~/.pi/agent/mcp.json") mcpFile) ]
   ++ (
