@@ -14,6 +14,7 @@
   file,
   git,
   git-lfs,
+  mcp-searxng,
   gnumake,
   gnused,
   jq,
@@ -103,6 +104,18 @@ let
   );
 
   piModelsFile = writeText "models.json" (builtins.toJSON piModels);
+  mcpFile = writeText "mcp.json" (
+    builtins.toJSON {
+      mcpServers = {
+        searxng = {
+          command = "mcp-searxng";
+          env = {
+            SEARXNG_URL = "https://searxng.avalls.dev";
+          };
+        };
+      };
+    }
+  );
 
   proxyExe = lib.getExe claude-sandbox-proxy;
   ensureProxy = writers.writePython3 "pi-sandbox-ensure-proxy" {
@@ -177,6 +190,7 @@ jail "pi-sandbox" pi (
     mount-cwd
   ]
   ++ lib.optional (piModels != null) (bind-pkg (noescape "~/.pi/agent/models.json") piModelsFile)
+  ++ [ (bind-pkg (noescape "~/.pi/agent/mcp.json") mcpFile) ]
   ++ (
     if nixDaemon then
       [
@@ -244,6 +258,7 @@ jail "pi-sandbox" pi (
       file
       gitPackage
       git-lfs
+      mcp-searxng
       gnugrep
       gnumake
       gnused
