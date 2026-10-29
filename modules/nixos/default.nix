@@ -2,9 +2,10 @@
   lib,
   inputs,
   packages,
+  overlays,
 }:
 let
-  staticArgs = { inherit inputs packages; };
+  staticArgs = { inherit inputs packages overlays; };
 
   # key keeps double imports deduplicated, safe since every file gets the same args
   curried = file: {
@@ -18,7 +19,7 @@ in
     ./desktop.nix
     ./de.nix
     ./virtualisation.nix
-    ./common.nix
+    (curried ./common.nix)
     ./homelab
     ./vfio.nix
     ./waylandWindowManagers.nix

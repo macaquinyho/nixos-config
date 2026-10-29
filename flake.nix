@@ -154,12 +154,16 @@
         }).config.build.wrapper
       ) nixpkgs;
 
-      # inputs and packages are the consumer's, so a module can see its overrides
+      # inputs, packages and overlays are the consumer's, so a module can see its overrides
       lib.mkCommonModule =
-        { inputs, packages }:
+        {
+          inputs,
+          packages,
+          overlays,
+        }:
         nixpkgs.lib.modules.importApply ./modules/nixos {
           inherit (nixpkgs) lib;
-          inherit inputs packages;
+          inherit inputs packages overlays;
         };
       overlays = import ./overlays;
 

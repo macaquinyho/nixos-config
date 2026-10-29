@@ -1,4 +1,4 @@
-{ inputs, packages }:
+{ inputs, packages, ... }:
 {
   self,
   pkgs,
