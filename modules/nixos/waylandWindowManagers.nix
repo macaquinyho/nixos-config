@@ -2,13 +2,12 @@
   config,
   lib,
   pkgs,
-  self,
   ...
 }:
 let
   cfg = config.custom.desktop.wm;
 
-  inherit (self.inputs) wrappers;
+  inherit (config.custom.flake.inputs) wrappers;
   userName = "arnau";
 
   desktopPackages = with pkgs; [
@@ -572,8 +571,12 @@ in
     };
     systemd.user.services =
       let
-        silverbulletPort = toString self.nixosConfigurations.ampere.config.services.silverbullet.listenPort;
-        inherit (self.nixosConfigurations.ampere.config.custom.deployment) port user hostname;
+        silverbulletPort = toString config.custom.flake.nixosConfigurations.ampere.config.services.silverbullet.listenPort;
+        inherit (config.custom.flake.nixosConfigurations.ampere.config.custom.deployment)
+          port
+          user
+          hostname
+          ;
         remoteHost = "${user}@${hostname} -p ${toString port}";
       in
       {

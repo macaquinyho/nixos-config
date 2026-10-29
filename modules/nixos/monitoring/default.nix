@@ -2,7 +2,6 @@
   config,
   lib,
   pkgs,
-  self,
   ...
 }:
 let
@@ -22,7 +21,7 @@ let
 
   vmPortOfCfg = hostConfig: lib.removePrefix ":" hostConfig.services.victoriametrics.listenAddress;
 
-  siteHost = site: self.nixosConfigurations.${site};
+  siteHost = site: config.custom.flake.nixosConfigurations.${site};
   siteIps = lib.genAttrs cfg.sites (site: wgIpOf (siteHost site));
   ownWgIp = siteIps.${cfg.siteName};
   otherSites = lib.filter (site: site != cfg.siteName) cfg.sites;
@@ -51,7 +50,7 @@ let
               }
             else
               null
-          ) (lib.filterAttrs (name: _: lib.elem name cfg.siteHosts) self.nixosConfigurations)
+          ) (lib.filterAttrs (name: _: lib.elem name cfg.siteHosts) config.custom.flake.nixosConfigurations)
         );
       in
       lib.optional (staticConfigs != [ ]) {

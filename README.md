@@ -8,7 +8,7 @@ is exposed is meant to be usable on its own.
 
 | output | |
 | --- | --- |
-| `lib.mkCommonModule` | builds the module set from your `inputs` and `packages`, everything under `custom.*` |
+| `nixosModules.common` | the module set, everything under `custom.*` |
 | `packages` | `claude-code`, `claude-sandbox`, `mcp-victoriametrics`, `nvim-mnw` |
 | `overlays` | package overrides and additions |
 | `lib.mkPreCommitCheck` | the nixfmt/deadnix/flake-checker hook set |
@@ -16,18 +16,16 @@ is exposed is meant to be usable on its own.
 
 ## Using the modules
 
-`lib.mkCommonModule` takes the `inputs`, `packages` and `overlays` the modules should see
-(the ones of the flake defining your `nixosConfigurations`, so its overrides
-apply). Modules that have not been migrated yet still read `self` from
-specialArgs. Options live under `custom.*` and everything is off by default.
+`nixosModules.common` reads the flake that defines your hosts through the
+read-only `custom.flake.{inputs,packages,overlays,nixosConfigurations}`
+options, so set them to your flake's values. Options live under `custom.*` and
+everything is off by default.
 
 ```nix
 nixpkgs.lib.nixosSystem {
-  specialArgs = { inherit self; };
   modules = [
-    (inputs.nixos-config.lib.mkCommonModule {
-      inherit (self) inputs packages overlays;
-    })
+    inputs.nixos-config.nixosModules.common
+    { custom.flake = { inherit (self) inputs packages overlays nixosConfigurations; }; }
     ./configuration.nix
   ];
 }

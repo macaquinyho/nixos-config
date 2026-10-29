@@ -1,6 +1,4 @@
-{ inputs, packages, ... }:
 {
-  self,
   pkgs,
   config,
   lib,
@@ -9,7 +7,7 @@
 let
 
   cfg = config.custom.dev;
-  inherit (inputs) wrappers;
+  inherit (config.custom.flake.inputs) wrappers;
 
   tmuxsessionizer = pkgs.writeShellScriptBin "sessionizer" (
     builtins.readFile ./dotfiles/tmux-sessionizer.sh
@@ -37,12 +35,12 @@ let
     tldr
     python313
     file
-    packages.${pkgs.stdenv.hostPlatform.system}.nvim-mnw
+    config.custom.flake.packages.${pkgs.stdenv.hostPlatform.system}.nvim-mnw
     jq
     repomix
     ripgrep
     git-lfs
-    packages.${pkgs.stdenv.hostPlatform.system}.claude-code
+    config.custom.flake.packages.${pkgs.stdenv.hostPlatform.system}.claude-code
   ];
 
   gitBase = (
@@ -247,9 +245,11 @@ in
       vimdiff = "nvim -d";
       aspm = "sudo lspci -vv | awk '/ASPM/{print $0}' RS= | grep --color -P '(^[a-z0-9:.]+|ASPM )'";
       grep = "grep --color=auto";
-      vimdev = "${packages.${pkgs.stdenv.hostPlatform.system}.nvim-mnw.devMode}/bin/nvim";
+      vimdev = "${
+        config.custom.flake.packages.${pkgs.stdenv.hostPlatform.system}.nvim-mnw.devMode
+      }/bin/nvim";
       claude = lib.getExe (
-        packages.${pkgs.stdenv.hostPlatform.system}.claude-sandbox.override {
+        config.custom.flake.packages.${pkgs.stdenv.hostPlatform.system}.claude-sandbox.override {
           inherit (cfg) gitPackage claudeSettings;
           extraMcpServers = cfg.claudeMcpServers;
           extraAllowedHosts = cfg.claudeAllowedHosts;
@@ -258,7 +258,7 @@ in
         }
       );
       pi = lib.getExe (
-        packages.${pkgs.stdenv.hostPlatform.system}.pi-sandbox.override {
+        config.custom.flake.packages.${pkgs.stdenv.hostPlatform.system}.pi-sandbox.override {
           inherit (cfg) gitPackage;
           nixDaemon = !config.custom.common.trustedUser;
           nixPackage = config.nix.package;
@@ -288,7 +288,7 @@ in
               ForwardAgent yes
           '';
 
-        validHosts = lib.filterAttrs isValidHost self.nixosConfigurations;
+        validHosts = lib.filterAttrs isValidHost config.custom.flake.nixosConfigurations;
 
         dynamicHostConfig = lib.concatStringsSep "\n" (lib.mapAttrsToList mkHostBlock validHosts);
 

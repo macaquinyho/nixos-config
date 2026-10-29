@@ -154,17 +154,8 @@
         }).config.build.wrapper
       ) nixpkgs;
 
-      # inputs, packages and overlays are the consumer's, so a module can see its overrides
-      lib.mkCommonModule =
-        {
-          inputs,
-          packages,
-          overlays,
-        }:
-        nixpkgs.lib.modules.importApply ./modules/nixos {
-          inherit (nixpkgs) lib;
-          inherit inputs packages overlays;
-        };
+      # do not use import keyword for pointing to modules, use the path
+      nixosModules.common = ./modules/nixos;
       overlays = import ./overlays;
 
       lib.mkPreCommitCheck =

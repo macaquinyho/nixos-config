@@ -2,7 +2,6 @@
   config,
   lib,
   pkgs,
-  self,
   ...
 }:
 let
@@ -27,10 +26,13 @@ in
     age.secrets.ci-deploy-ssh-key.owner = "gitlab-runner";
 
     # the deploy job's ssh pins each target's key under its name
-    programs.ssh.knownHosts = lib.mapAttrs (name: c: {
-      hostNames = [ name ];
-      inherit (c.config.custom.deployment) publicKey;
-    }) (lib.filterAttrs (_: c: c.config.custom.deployment.enable) self.nixosConfigurations);
+    programs.ssh.knownHosts =
+      lib.mapAttrs
+        (name: c: {
+          hostNames = [ name ];
+          inherit (c.config.custom.deployment) publicKey;
+        })
+        (lib.filterAttrs (_: c: c.config.custom.deployment.enable) config.custom.flake.nixosConfigurations);
 
     users.users.gitlab-runner = {
       group = "gitlab-runner";

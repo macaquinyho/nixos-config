@@ -1,4 +1,3 @@
-{ inputs, overlays, ... }:
 {
   config,
   lib,
@@ -43,8 +42,8 @@ in
         };
       };
       nixpkgs.overlays = [
-        overlays.modifications
-        inputs.agenix-rekey.overlays.default
+        config.custom.flake.overlays.modifications
+        config.custom.flake.inputs.agenix-rekey.overlays.default
       ];
       nixpkgs.flake.setNixPath = !cfg.cloud.enable;
       nixpkgs.flake.setFlakeRegistry = !cfg.cloud.enable;
