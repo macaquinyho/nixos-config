@@ -1,3 +1,4 @@
+{ inputs, packages }:
 {
   self,
   pkgs,
@@ -8,7 +9,7 @@
 let
 
   cfg = config.custom.dev;
-  inherit (self.inputs) wrappers;
+  inherit (inputs) wrappers;
 
   tmuxsessionizer = pkgs.writeShellScriptBin "sessionizer" (
     builtins.readFile ./dotfiles/tmux-sessionizer.sh
@@ -36,12 +37,12 @@ let
     tldr
     python313
     file
-    self.packages.${pkgs.stdenv.hostPlatform.system}.nvim-mnw
+    packages.${pkgs.stdenv.hostPlatform.system}.nvim-mnw
     jq
     repomix
     ripgrep
     git-lfs
-    self.packages.${pkgs.stdenv.hostPlatform.system}.claude-code
+    packages.${pkgs.stdenv.hostPlatform.system}.claude-code
   ];
 
   gitBase = (
@@ -246,9 +247,9 @@ in
       vimdiff = "nvim -d";
       aspm = "sudo lspci -vv | awk '/ASPM/{print $0}' RS= | grep --color -P '(^[a-z0-9:.]+|ASPM )'";
       grep = "grep --color=auto";
-      vimdev = "${self.packages.${pkgs.stdenv.hostPlatform.system}.nvim-mnw.devMode}/bin/nvim";
+      vimdev = "${packages.${pkgs.stdenv.hostPlatform.system}.nvim-mnw.devMode}/bin/nvim";
       claude = lib.getExe (
-        self.packages.${pkgs.stdenv.hostPlatform.system}.claude-sandbox.override {
+        packages.${pkgs.stdenv.hostPlatform.system}.claude-sandbox.override {
           inherit (cfg) gitPackage claudeSettings;
           extraMcpServers = cfg.claudeMcpServers;
           extraAllowedHosts = cfg.claudeAllowedHosts;
@@ -257,7 +258,7 @@ in
         }
       );
       pi = lib.getExe (
-        self.packages.${pkgs.stdenv.hostPlatform.system}.pi-sandbox.override {
+        packages.${pkgs.stdenv.hostPlatform.system}.pi-sandbox.override {
           inherit (cfg) gitPackage;
           nixDaemon = !config.custom.common.trustedUser;
           nixPackage = config.nix.package;

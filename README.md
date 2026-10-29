@@ -8,7 +8,7 @@ is exposed is meant to be usable on its own.
 
 | output | |
 | --- | --- |
-| `nixosModules.common` | the module set, everything under `custom.*` |
+| `lib.mkCommonModule` | builds the module set from your `inputs` and `packages`, everything under `custom.*` |
 | `packages` | `claude-code`, `claude-sandbox`, `mcp-victoriametrics`, `nvim-mnw` |
 | `overlays` | package overrides and additions |
 | `lib.mkPreCommitCheck` | the nixfmt/deadnix/flake-checker hook set |
@@ -16,16 +16,18 @@ is exposed is meant to be usable on its own.
 
 ## Using the modules
 
-`nixosModules.common` expects a few specialArgs: `self` (the flake defining
-your `nixosConfigurations`, used for `self.packages`, `self.overlays` and
-`self.inputs`). Options live under
-`custom.*` and everything is off by default.
+`lib.mkCommonModule` takes the `inputs` and `packages` the modules should see
+(the ones of the flake defining your `nixosConfigurations`, so its overrides
+apply). Modules that have not been migrated yet still read `self` from
+specialArgs. Options live under `custom.*` and everything is off by default.
 
 ```nix
 nixpkgs.lib.nixosSystem {
   specialArgs = { inherit self; };
   modules = [
-    inputs.nixos-config.nixosModules.common
+    (inputs.nixos-config.lib.mkCommonModule {
+      inherit (self) inputs packages;
+    })
     ./configuration.nix
   ];
 }
