@@ -3,8 +3,6 @@
   pkgs,
   config,
   lib,
-  nixpkgs-unfree,
-  nixpkgs,
   ...
 }:
 let
@@ -40,7 +38,7 @@ let
     file
     self.packages.${pkgs.stdenv.hostPlatform.system}.nvim-mnw
     jq
-    nixpkgs.legacyPackages.${pkgs.stdenv.hostPlatform.system}.repomix
+    repomix
     ripgrep
     git-lfs
     self.packages.${pkgs.stdenv.hostPlatform.system}.claude-code

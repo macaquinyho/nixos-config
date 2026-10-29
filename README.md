@@ -18,12 +18,12 @@ is exposed is meant to be usable on its own.
 
 `nixosModules.common` expects a few specialArgs: `self` (the flake defining
 your `nixosConfigurations`, used for `self.packages`, `self.overlays` and
-`self.inputs`), plus `nixpkgs` and `nixpkgs-unfree`. Options live under
+`self.inputs`). Options live under
 `custom.*` and everything is off by default.
 
 ```nix
 nixpkgs.lib.nixosSystem {
-  specialArgs = { inherit self nixpkgs nixpkgs-unfree; };
+  specialArgs = { inherit self; };
   modules = [
     inputs.nixos-config.nixosModules.common
     ./configuration.nix

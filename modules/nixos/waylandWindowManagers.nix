@@ -3,7 +3,6 @@
   lib,
   pkgs,
   self,
-  nixpkgs,
   ...
 }:
 let
@@ -467,8 +466,6 @@ in
     # replaces polkit gnome
     security.soteria = {
       enable = true;
-      # https://github.com/imvaskel/soteria/issues/33, fixed in 0.3.2
-      package = nixpkgs.legacyPackages.${pkgs.stdenv.hostPlatform.system}.soteria;
     };
 
     services.swayidle = {
