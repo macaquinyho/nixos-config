@@ -167,6 +167,7 @@
           pkgs,
           system,
           src,
+          extraHooks ? { },
         }:
         git-hooks.lib.${system}.run {
           inherit src;
@@ -177,7 +178,8 @@
             deadnix.settings.noLambdaPatternNames = true;
             deadnix.settings.noLambdaArg = true;
             flake-checker.enable = true;
-          };
+          }
+          // extraHooks;
         };
     };
 }
