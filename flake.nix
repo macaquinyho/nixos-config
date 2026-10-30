@@ -114,6 +114,10 @@
             claude-sandbox-proxy = self.packages.${system}.claude-sandbox-proxy;
             pi = llm-agents.packages.${system}.pi;
           };
+          claude-desktop = pkgs.callPackage ./packages/claude-desktop-jail.nix {
+            jail = jail-nix.lib.init pkgs;
+            claude-desktop = llm-agents.packages.${system}.claude-desktop;
+          };
         }
       ) nixpkgs;
 
