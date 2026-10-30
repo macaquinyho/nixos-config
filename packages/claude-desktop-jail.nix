@@ -23,7 +23,6 @@ let
           "org.freedesktop.portal.Desktop"
           "org.kde.StatusNotifierWatcher"
         ];
-        own = [ "org.kde.StatusNotifierItem-*" ];
       })
       (try-fwd-env "NIXOS_OZONE_WL")
       (try-fwd-env "ELECTRON_OZONE_PLATFORM_HINT")
