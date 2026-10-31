@@ -18,7 +18,15 @@ in
 {
   options.services.awww = {
     enable = lib.mkEnableOption "awww, a Wayland wallpaper daemon";
-    package = lib.mkPackageOption pkgs "awww" { };
+    package = lib.mkOption {
+      type = lib.types.package;
+      # JPEG XL decoding is an optional cargo feature that nixpkgs leaves off
+      default = pkgs.awww.overrideAttrs (old: {
+        buildFeatures = (old.buildFeatures or [ ]) ++ [ "jxl" ];
+      });
+      defaultText = lib.literalExpression ''pkgs.awww with the "jxl" feature'';
+      description = "The awww package to use.";
+    };
     image = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       default = null;
