@@ -400,7 +400,7 @@ in
 
     services.awww = {
       enable = true;
-      image = ../../wallpapers/fuji.jxl;
+      directory = ../../wallpapers;
     };
 
     # niri attaches to xdg-desktop-autostart.target and this masks it

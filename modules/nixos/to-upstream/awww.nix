@@ -12,8 +12,15 @@ let
     until ${lib.getExe cfg.package} query >/dev/null 2>&1; do
       sleep 0.1
     done
-    exec ${lib.getExe cfg.package} img ${lib.escapeShellArgs cfg.imageArgs} ${cfg.image}
+    ${
+      if cfg.directory != null then
+        "image=$(${pkgs.findutils}/bin/find ${cfg.directory} -type f | ${pkgs.coreutils}/bin/shuf -n 1)"
+      else
+        "image=${cfg.image}"
+    }
+    exec ${lib.getExe cfg.package} img ${lib.escapeShellArgs cfg.imageArgs} "$image"
   '';
+  hasImage = cfg.image != null || cfg.directory != null;
 in
 {
   options.services.awww = {
@@ -32,6 +39,19 @@ in
       type = lib.types.nullOr lib.types.path;
       default = null;
       description = "Image shown on every output once the daemon is up.";
+    };
+    directory = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = ''
+        Directory of images. One is picked at random at startup and again every
+        `interval`. Takes precedence over `image`.
+      '';
+    };
+    interval = lib.mkOption {
+      type = lib.types.str;
+      default = "30min";
+      description = "Time between wallpaper changes when `directory` is set, as a systemd time span.";
     };
     imageArgs = lib.mkOption {
       type = lib.types.listOf lib.types.str;
@@ -65,10 +85,32 @@ in
       serviceConfig = {
         Type = "simple";
         ExecStart = lib.getExe' cfg.package "awww-daemon";
-        ExecStartPost = lib.mkIf (cfg.image != null) "${setImage}";
+        ExecStartPost = lib.mkIf hasImage "${setImage}";
         Restart = "always";
       };
 
+      wantedBy = [ cfg.systemd.target ];
+    };
+
+    systemd.user.services.awww-rotate = lib.mkIf (cfg.directory != null) {
+      unitConfig = {
+        Description = "Pick the next wallpaper";
+        ConditionEnvironment = "WAYLAND_DISPLAY";
+        Requisite = "awww.service";
+        After = "awww.service";
+      };
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${setImage}";
+      };
+    };
+
+    systemd.user.timers.awww-rotate = lib.mkIf (cfg.directory != null) {
+      unitConfig.Description = "Rotate the wallpaper";
+      timerConfig = {
+        OnActiveSec = cfg.interval;
+        OnUnitActiveSec = cfg.interval;
+      };
       wantedBy = [ cfg.systemd.target ];
     };
   };
