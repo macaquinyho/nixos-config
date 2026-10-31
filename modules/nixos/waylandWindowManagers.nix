@@ -110,12 +110,6 @@ let
           '';
         }
     ).wrapper;
-  set-wallpaper = pkgs.writeShellApplication {
-    name = "set-wallpaper";
-    text = ''
-      ${lib.getExe pkgs.swaybg} -i ${../../wallpapers/fuji.png} -o "*" &
-    '';
-  };
   fuzzelPowerMenu = pkgs.writeShellApplication {
     name = "fuzzelpowermenu";
     runtimeInputs = [
@@ -404,6 +398,11 @@ in
     programs.niri.enable = cfg.niri.enable;
     programs.niri.package = niri-wrapped;
 
+    services.awww = {
+      enable = true;
+      image = ../../wallpapers/fuji.jxl;
+    };
+
     # niri attaches to xdg-desktop-autostart.target and this masks it
     systemd.user.targets.xdg-desktop-autostart.enable = true;
 
@@ -451,7 +450,6 @@ in
         nautilus
         file-roller
         fuzzelWrapped
-        set-wallpaper
         swaylockWrapped
       ]
       ++ desktopPackages
