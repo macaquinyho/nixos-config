@@ -17,6 +17,7 @@
   git-lfs,
   gnumake,
   gnused,
+  iproute2,
   jq,
   just,
   python313,
@@ -161,6 +162,59 @@ jail "claude-sandbox" (claude-code.override { inherit extraMcpServers; }) (
       exec {CLAUDE_LOG_FD}> >(exec ${proxyExe} journal "claude-sandbox-bridge@$PWD")
       RUNTIME_ARGS+=(--setenv CLAUDE_SANDBOX_LOG_FD "$CLAUDE_LOG_FD")
     '')
+    # --usb VID:PID (repeatable) binds the device nodes, --netif IFACE moves a
+    # host interface into the sandbox netns. Both must precede claude's own args.
+    (add-runtime ''
+      CLAUDE_USB_IDS=()
+      CLAUDE_NETIF=
+      while [ $# -gt 0 ]; do
+        case $1 in
+          --usb) CLAUDE_USB_IDS+=("''${2:?--usb needs VID:PID}"); shift 2 ;;
+          --netif) CLAUDE_NETIF=''${2:?--netif needs an interface name}; shift 2 ;;
+          *) break ;;
+        esac
+      done
+
+      for id in "''${CLAUDE_USB_IDS[@]}"; do
+        found=
+        for d in /sys/bus/usb/devices/*; do
+          [ -r "$d/idVendor" ] || continue
+          [ "$(< "$d/idVendor"):$(< "$d/idProduct")" = "$id" ] || continue
+          found=1
+          node=$(printf '/dev/bus/usb/%03d/%03d' "$(< "$d/busnum")" "$(< "$d/devnum")")
+          RUNTIME_ARGS+=(--dev-bind "$node" "$node")
+          for name in $(${findutils}/bin/find "$d/" \( -name 'ttyUSB*' -o -name 'ttyACM*' -o -name 'hidraw[0-9]*' \) -printf '%f\n' | sort -u); do
+            [ -e "/dev/$name" ] && RUNTIME_ARGS+=(--dev-bind "/dev/$name" "/dev/$name")
+          done
+        done
+        if [ -z "$found" ]; then
+          echo "claude-sandbox: no USB device $id" >&2
+          exit 1
+        fi
+      done
+
+      if [ -n "$CLAUDE_NETIF" ]; then
+        if [ ! -d "/sys/class/net/$CLAUDE_NETIF" ]; then
+          echo "claude-sandbox: no interface $CLAUDE_NETIF" >&2
+          exit 1
+        fi
+        # bwrap reports the in-namespace pid on this fd, and the interface has to be
+        # moved by the pid that owns the netns
+        exec {CLAUDE_STATUS_FD}> >(
+          read -r status
+          pid=$(${lib.getExe jq} -r '."child-pid"' <<< "$status")
+          /run/wrappers/bin/sudo ${iproute2}/bin/ip link set "$CLAUDE_NETIF" netns "$pid" ||
+            echo "claude-sandbox: could not move $CLAUDE_NETIF" >&2
+          cat > /dev/null
+        )
+        RUNTIME_ARGS+=(
+          --json-status-fd "$CLAUDE_STATUS_FD"
+          --cap-add CAP_NET_ADMIN --cap-add CAP_NET_RAW
+          --setenv CLAUDE_SANDBOX_NETIF "$CLAUDE_NETIF"
+        )
+      fi
+    '')
+
     (add-cleanup ''
       if [ -n "''${CLAUDE_RUN_DIR-}" ]; then
         rm -rf "$CLAUDE_RUN_DIR"
@@ -177,6 +231,13 @@ jail "claude-sandbox" (claude-code.override { inherit extraMcpServers; }) (
         # shellcheck disable=SC1091
         . ${devEnvFile}
         set -u
+      fi
+      if [ -n "''${CLAUDE_SANDBOX_NETIF-}" ]; then
+        # the host moves the interface in once bwrap has created the netns
+        for _ in $(seq 600); do
+          ip link show "$CLAUDE_SANDBOX_NETIF" > /dev/null 2>&1 && break
+          sleep 0.1
+        done
       fi
       exec ${proxyExe} bridge 127.0.0.1:${toString proxyPort} ${proxyDir}/proxy.sock -- ${entry}
     ''))
@@ -276,6 +337,7 @@ jail "claude-sandbox" (claude-code.override { inherit extraMcpServers; }) (
       gnugrep
       gnumake
       gnused
+      iproute2
       jq
       just
       python313
