@@ -207,8 +207,11 @@ jail "claude-sandbox" (claude-code.override { inherit extraMcpServers; }) (
             echo "claude-sandbox: could not move $CLAUDE_NETIF" >&2
           cat > /dev/null
         )
+        # --dev makes bwrap nest a second userns to drop to the real uid, and caps
+        # there don't apply to the netns, which the outer userns owns
         RUNTIME_ARGS+=(
           --json-status-fd "$CLAUDE_STATUS_FD"
+          --uid 0 --gid 0
           --cap-add CAP_NET_ADMIN --cap-add CAP_NET_RAW
           --setenv CLAUDE_SANDBOX_NETIF "$CLAUDE_NETIF"
         )
