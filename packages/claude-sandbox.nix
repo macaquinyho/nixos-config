@@ -162,35 +162,19 @@ jail "claude-sandbox" (claude-code.override { inherit extraMcpServers; }) (
       exec {CLAUDE_LOG_FD}> >(exec ${proxyExe} journal "claude-sandbox-bridge@$PWD")
       RUNTIME_ARGS+=(--setenv CLAUDE_SANDBOX_LOG_FD "$CLAUDE_LOG_FD")
     '')
-    # --usb VID:PID (repeatable) binds the device nodes, --netif IFACE moves a
+    # --dev-bind PATH (repeatable) binds a host device node, --netif IFACE moves a
     # host interface into the sandbox netns. Both must precede claude's own args.
     (add-runtime ''
-      CLAUDE_USB_IDS=()
       CLAUDE_NETIF=
       while [ $# -gt 0 ]; do
         case $1 in
-          --usb) CLAUDE_USB_IDS+=("''${2:?--usb needs VID:PID}"); shift 2 ;;
+          --dev-bind)
+            dev=''${2:?--dev-bind needs a device path}
+            RUNTIME_ARGS+=(--dev-bind "$dev" "$dev")
+            shift 2 ;;
           --netif) CLAUDE_NETIF=''${2:?--netif needs an interface name}; shift 2 ;;
           *) break ;;
         esac
-      done
-
-      for id in "''${CLAUDE_USB_IDS[@]}"; do
-        found=
-        for d in /sys/bus/usb/devices/*; do
-          [ -r "$d/idVendor" ] || continue
-          [ "$(< "$d/idVendor"):$(< "$d/idProduct")" = "$id" ] || continue
-          found=1
-          node=$(printf '/dev/bus/usb/%03d/%03d' "$(< "$d/busnum")" "$(< "$d/devnum")")
-          RUNTIME_ARGS+=(--dev-bind "$node" "$node")
-          for name in $(${findutils}/bin/find "$d/" \( -name 'ttyUSB*' -o -name 'ttyACM*' -o -name 'hidraw[0-9]*' \) -printf '%f\n' | sort -u); do
-            [ -e "/dev/$name" ] && RUNTIME_ARGS+=(--dev-bind "/dev/$name" "/dev/$name")
-          done
-        done
-        if [ -z "$found" ]; then
-          echo "claude-sandbox: no USB device $id" >&2
-          exit 1
-        fi
       done
 
       if [ -n "$CLAUDE_NETIF" ]; then
