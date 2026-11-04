@@ -107,6 +107,14 @@ let
       is at the path in `$CLAUDE_SANDBOX_HOST_TMP`. When you tell me about a file
       in /tmp, give me that host path instead of the /tmp one.
 
+      ## Sandbox git worktrees
+
+      When this directory belongs to a git repository with other worktrees, they
+      are mounted at their usual paths, read-only. The shared git directory is
+      writable. Don't remove or prune those worktrees, and don't edit files in
+      them. If a task needs that, ask me to restart claude with `--add-dir` for
+      that path.
+
       ## Sandbox dev shell
 
       The devShell from this directory's flake.nix, if there is one, is already
@@ -176,12 +184,21 @@ jail "claude-sandbox" (claude-code.override { inherit extraMcpServers; }) (
       exec {CLAUDE_LOG_FD}> >(exec ${proxyExe} journal "claude-sandbox-bridge@$PWD")
       RUNTIME_ARGS+=(--setenv CLAUDE_SANDBOX_LOG_FD "$CLAUDE_LOG_FD")
     '')
-    # --dev-bind PATH (repeatable) binds a host device node, --netif IFACE moves a
-    # host interface into the sandbox netns. Both must precede claude's own args.
+    # --dev-bind PATH binds a host device node, --add-dir DIR mounts a directory at the
+    # same path, --netif IFACE moves a host interface into the sandbox netns. The
+    # first two repeat, and all must precede claude's own args.
     (add-runtime ''
       CLAUDE_NETIF=
+      CLAUDE_EXTRA_DIRS=()
       while [ $# -gt 0 ]; do
         case $1 in
+          --add-dir)
+            [ -d "''${2:?--add-dir needs a directory}" ] || {
+              echo "claude-sandbox: $2 is not a directory" >&2
+              exit 1
+            }
+            CLAUDE_EXTRA_DIRS+=("$2")
+            shift 2 ;;
           --dev-bind)
             dev=''${2:?--dev-bind needs a device path}
             RUNTIME_ARGS+=(--dev-bind "$dev" "$dev")
@@ -308,16 +325,47 @@ jail "claude-sandbox" (claude-code.override { inherit extraMcpServers; }) (
   )
   ++ [
 
-    # if git worktree, mount also the parent
+    # --add-dir paths are writable. For them and the cwd, other worktrees are
+    # mounted read-only, with their git admin dirs, so they can't be removed. The
+    # rest of the git dir stays writable.
+    # Worktree .git files point to these by absolute path, so paths are kept.
     (add-runtime ''
-      GIT_PATHS=$(${git}/bin/git rev-parse --path-format=absolute \
-        --show-toplevel --git-common-dir 2>/dev/null || true)
-      GIT_TOPLEVEL=''${GIT_PATHS%%$'\n'*}
-      GIT_COMMON_DIR=''${GIT_PATHS##*$'\n'}
-      if [ -n "$GIT_PATHS" ] && [ "$GIT_TOPLEVEL" = "$(pwd -P)" ] &&
-         [ "''${GIT_COMMON_DIR#"$GIT_TOPLEVEL"/}" = "$GIT_COMMON_DIR" ]; then
-        RUNTIME_ARGS+=(--bind "$GIT_COMMON_DIR" "$GIT_COMMON_DIR")
-      fi
+      claude_rw_roots=("$(pwd -P)")
+      for dir in "''${CLAUDE_EXTRA_DIRS[@]}"; do
+        p=$(realpath -e -- "$dir")
+        claude_rw_roots+=("$p")
+        RUNTIME_ARGS+=(--bind "$p" "$p")
+      done
+      claude_covered() {
+        local r
+        for r in "''${claude_rw_roots[@]}"; do
+          case $1/ in
+            "$r"/*) return 0 ;;
+          esac
+        done
+        return 1
+      }
+      claude_bind_git() {
+        local common wt p
+        common=$(${git}/bin/git -C "$1" rev-parse --path-format=absolute --git-common-dir 2> /dev/null) || return 0
+        while read -r wt; do
+          p=$(realpath -e -- "$wt" 2> /dev/null) || continue
+          claude_covered "$p" || RUNTIME_ARGS+=(--ro-bind "$p" "$p")
+        done < <(${git}/bin/git -C "$1" worktree list --porcelain | ${gnused}/bin/sed -n 's/^worktree //p')
+        # after the worktrees, so it is not hidden by the read-only mount of one
+        common=$(realpath -e -- "$common")
+        claude_covered "$common" || RUNTIME_ARGS+=(--bind "$common" "$common")
+        # git unregisters a worktree even when deleting its files fails
+        for d in "$common"/worktrees/*/; do
+          d=''${d%/}
+          [ -f "$d/gitdir" ] || continue
+          claude_covered "$(dirname "$(< "$d/gitdir")")" || RUNTIME_ARGS+=(--ro-bind "$d" "$d")
+        done
+      }
+      claude_bind_git .
+      for dir in "''${CLAUDE_EXTRA_DIRS[@]}"; do
+        claude_bind_git "$dir"
+      done
     '')
 
     # claude reaches for /bin/bash for its shell tool
