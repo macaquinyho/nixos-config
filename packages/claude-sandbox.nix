@@ -101,6 +101,12 @@ let
       `socks5h://localhost${proxyDir}/proxy.sock`). Use socks5h, there is no DNS
       in the sandbox.
 
+      ## Sandbox /tmp
+
+      /tmp is a host directory, so I can read what you leave there. On the host it
+      is at the path in `$CLAUDE_SANDBOX_HOST_TMP`. When you tell me about a file
+      in /tmp, give me that host path instead of the /tmp one.
+
       ## Sandbox dev shell
 
       The devShell from this directory's flake.nix, if there is one, is already
@@ -153,6 +159,14 @@ jail "claude-sandbox" (claude-code.override { inherit extraMcpServers; }) (
     (add-runtime ''
       CLAUDE_RUN_DIR=$(mktemp -d)
       mkdir "$CLAUDE_RUN_DIR/run"
+
+      CLAUDE_HOST_TMP_ROOT="''${XDG_RUNTIME_DIR:?}/claude-sandbox-tmp"
+      mkdir -p "$CLAUDE_HOST_TMP_ROOT"
+      CLAUDE_HOST_TMP=$(mktemp -d -p "$CLAUDE_HOST_TMP_ROOT")
+      RUNTIME_ARGS+=(
+        --bind "$CLAUDE_HOST_TMP" /tmp
+        --setenv CLAUDE_SANDBOX_HOST_TMP "$CLAUDE_HOST_TMP"
+      )
 
       CLAUDE_PROXY_DIR="''${XDG_RUNTIME_DIR:?}/claude-sandbox-proxy"
       mkdir -p "$CLAUDE_PROXY_DIR"
