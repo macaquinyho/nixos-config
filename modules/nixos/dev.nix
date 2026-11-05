@@ -14,6 +14,30 @@ let
   );
   sopsPlugins = pkgs.sops.withAgePlugins (p: [ p.age-plugin-fido2-hmac ]);
   claudeMdFile = pkgs.writeText "CLAUDE.md" cfg.claudeMd;
+  # git for the sandbox only: https with a read-only OAuth token on these hosts
+  sandboxGit =
+    if cfg.claudeGitOauth == { } then
+      cfg.gitPackage
+    else
+      (cfg.gitPackage.passthru.configuration.apply {
+        settings = {
+          # git runs the general helper before the host's, and only one value fits
+          credential = {
+            helper = "cache --timeout 28800";
+          }
+          // lib.mapAttrs' (
+            host: o:
+            lib.nameValuePair "https://${host}" {
+              oauthClientId = o.clientId;
+              oauthScopes = o.scopes;
+              helper = "oauth -device";
+            }
+          ) cfg.claudeGitOauth;
+          url = lib.mapAttrs' (
+            host: _: lib.nameValuePair "https://${host}/" { insteadOf = "git@${host}:"; }
+          ) cfg.claudeGitOauth;
+        };
+      }).wrapper;
   claudeSettingsFile = (pkgs.formats.json { }).generate "claude-settings.json" cfg.claudeSettings;
   devPackages = with pkgs; [
     tmuxsessionizer
@@ -208,15 +232,43 @@ in
       example = [ "gitlab.example.com:443" ];
       description = "HOST:PORT entries added to the claude sandbox's egress allowlist.";
     };
+
+    claudeGitOauth = lib.mkOption {
+      type = lib.types.attrsOf (
+        lib.types.submodule {
+          options = {
+            clientId = lib.mkOption {
+              type = lib.types.str;
+              description = "Application id of an OAuth application registered on the host.";
+            };
+            scopes = lib.mkOption {
+              type = lib.types.str;
+              default = "read_repository";
+              description = "OAuth scopes requested. The default only allows reading.";
+            };
+          };
+        }
+      );
+      default = { };
+      example = {
+        "gitlab.example.com".clientId = "0123abcd";
+      };
+      description = ''
+        Hosts the claude sandbox reaches over https with a read-only OAuth token,
+        by host name. Git remotes on them are rewritten from ssh to https.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
     users.users.arnau.packages = devPackages ++ [
       cfg.gitPackage
       (config.custom.flake.packages.${pkgs.stdenv.hostPlatform.system}.claude-sandbox.override {
-        inherit (cfg) gitPackage claudeSettings;
+        inherit (cfg) claudeSettings;
+        gitPackage = sandboxGit;
         extraMcpServers = cfg.claudeMcpServers;
         extraAllowedHosts = cfg.claudeAllowedHosts;
+        gitOauth = cfg.claudeGitOauth;
         nixDaemon = !config.custom.common.trustedUser;
         nixPackage = config.nix.package;
       })

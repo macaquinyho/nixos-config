@@ -4,6 +4,8 @@
   claude-code,
   mcp-victoriametrics,
   writeText,
+  writeShellScript,
+  git-credential-oauth,
   symlinkJoin,
   cacert,
   claude-sandbox-proxy,
@@ -73,6 +75,13 @@
     ],
   extraAllowedHosts ? [ ],
   extraMcpServers ? { },
+
+  # Hosts whose git remotes authenticate through an OAuth application of the
+  # user's, with git-credential-oauth. gitPackage has to carry the matching git
+  # config (see custom.dev.claudeGitOauth), this only runs the authorization at
+  # start. The application is registered with only the read scope, so the
+  # sandbox cannot push.
+  gitOauth ? { },
 }:
 # Claude Code confined to the directory it is started in
 let
@@ -82,6 +91,21 @@ let
   runDir = "/run/claude-sandbox";
   proxyDir = "/run/claude-sandbox-proxy";
   devEnvFile = "${runDir}/devenv";
+
+  gitOauthHosts = lib.attrNames gitOauth;
+  # runs under the proxy bridge, as the authorization needs the network
+  gitAuthPrime = writeShellScript "claude-sandbox-git-auth" ''
+    if [ -z "''${CLAUDE_SANDBOX_NO_GIT_AUTH-}" ]; then
+      for host in ${lib.escapeShellArgs gitOauthHosts}; do
+        if creds=$(printf 'protocol=https\nhost=%s\n\n' "$host" | GIT_TERMINAL_PROMPT=0 git credential fill); then
+          printf '%s\n' "$creds" | git credential approve
+        else
+          echo "claude-sandbox: no git credentials for $host" >&2
+        fi
+      done
+    fi
+    exec "$@"
+  '';
 
   claudeMdFile = writeText "CLAUDE.md" (
     lib.optionalString (claudeMd != null) claudeMd
@@ -108,7 +132,16 @@ let
       is at the path in `$CLAUDE_SANDBOX_HOST_TMP`. When you tell me about a file
       in /tmp, give me that host path instead of the /tmp one.
 
-      ## Sandbox git worktrees
+      ${
+        lib.optionalString (gitOauth != { }) ''
+          ## Sandbox git access
+
+          Git over https to ${lib.concatStringsSep ", " gitOauthHosts} is authenticated
+          with a read-only token, and ssh remotes are rewritten to https. Fetch and pull
+          work, push is refused by the server. Don't try to work around that.
+
+        ''
+      }## Sandbox git worktrees
 
       When this directory belongs to a git repository with other worktrees, they
       are mounted at their usual paths, read-only. The shared git directory is
@@ -188,6 +221,7 @@ let
       # same path, --netif IFACE moves a host interface into the sandbox netns. The
       # first two repeat, and all must precede claude's own args. --exec CMD... runs
       # CMD in the sandbox instead of claude, and takes the rest of the arguments.
+      # --no-git-auth skips the git authorization at start.
       (add-runtime ''
         CLAUDE_NETIF=
         CLAUDE_EXTRA_DIRS=()
@@ -205,6 +239,9 @@ let
               RUNTIME_ARGS+=(--dev-bind "$dev" "$dev")
               shift 2 ;;
             --netif) CLAUDE_NETIF=''${2:?--netif needs an interface name}; shift 2 ;;
+            --no-git-auth)
+              RUNTIME_ARGS+=(--setenv CLAUDE_SANDBOX_NO_GIT_AUTH 1)
+              shift ;;
             --exec)
               shift
               [ $# -gt 0 ] || {
@@ -269,13 +306,18 @@ let
         if [ -n "''${CLAUDE_SANDBOX_EXEC-}" ]; then
           exec ${proxyExe} bridge 127.0.0.1:${toString proxyPort} ${proxyDir}/proxy.sock -- "$@"
         fi
-        exec ${proxyExe} bridge 127.0.0.1:${toString proxyPort} ${proxyDir}/proxy.sock -- ${entry}
+        exec ${proxyExe} bridge 127.0.0.1:${toString proxyPort} ${proxyDir}/proxy.sock -- ${
+          lib.optionalString (gitOauth != { }) "${gitAuthPrime} "
+        }${entry}
       ''))
       (set-env "HTTP_PROXY" proxyUrl)
       (set-env "HTTPS_PROXY" proxyUrl)
       (set-env "http_proxy" proxyUrl)
       (set-env "https_proxy" proxyUrl)
       (set-env "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" "1")
+    ]
+    ++ lib.optional (gitOauth != { }) (add-pkg-deps [ git-credential-oauth ])
+    ++ [
       no-new-session
 
       # one login, one history and one set of settings for every workspace,
