@@ -17,7 +17,7 @@ _claude_sandbox() {
       --add-dir) mapfile -t COMPREPLY < <(compgen -d -- "$cur") ;;
     esac
   elif [[ $cur == -* ]]; then
-    mapfile -t COMPREPLY < <(compgen -W "--dev-bind --netif --add-dir --no-git-auth --exec" -- "$cur")
+    mapfile -t COMPREPLY < <(compgen -W "--dev-bind --netif --add-dir --git-auth --exec" -- "$cur")
   fi
 }
 complete -o default -F _claude_sandbox claude

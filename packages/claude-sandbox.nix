@@ -76,11 +76,11 @@
   extraAllowedHosts ? [ ],
   extraMcpServers ? { },
 
-  # Hosts whose git remotes authenticate through an OAuth application of the
-  # user's, with git-credential-oauth. gitPackage has to carry the matching git
-  # config (see custom.dev.claudeGitOauth), this only runs the authorization at
-  # start. The application is registered with only the read scope, so the
-  # sandbox cannot push.
+  # host -> { clientId, scopes ? "read_repository" }. With --git-auth, git
+  # remotes on these hosts authenticate through an OAuth application of the
+  # user's, with git-credential-oauth, and ssh remotes are rewritten to https.
+  # The application is registered with only the read scope, so the sandbox
+  # cannot push.
   gitOauth ? { },
 }:
 # Claude Code confined to the directory it is started in
@@ -93,9 +93,33 @@ let
   devEnvFile = "${runDir}/devenv";
 
   gitOauthHosts = lib.attrNames gitOauth;
+  gitOauthConfig = writeText "claude-sandbox-gitconfig" (
+    lib.generators.toGitINI {
+      credential = lib.mapAttrs' (
+        host: o:
+        lib.nameValuePair "https://${host}" {
+          oauthClientId = o.clientId;
+          oauthScopes = o.scopes or "read_repository";
+          helper = [
+            "cache --timeout 28800"
+            "oauth -device"
+          ];
+        }
+      ) gitOauth;
+      url = lib.mapAttrs' (
+        host: _:
+        lib.nameValuePair "https://${host}/" {
+          insteadOf = [
+            "git@${host}:"
+            "ssh://git@${host}/"
+          ];
+        }
+      ) gitOauth;
+    }
+  );
   # runs under the proxy bridge, as the authorization needs the network
   gitAuthPrime = writeShellScript "claude-sandbox-git-auth" ''
-    if [ -z "''${CLAUDE_SANDBOX_NO_GIT_AUTH-}" ]; then
+    if [ -n "''${CLAUDE_SANDBOX_GIT_AUTH-}" ]; then
       for host in ${lib.escapeShellArgs gitOauthHosts}; do
         if creds=$(printf 'protocol=https\nhost=%s\n\n' "$host" | GIT_TERMINAL_PROMPT=0 git credential fill); then
           printf '%s\n' "$creds" | git credential approve
@@ -136,9 +160,11 @@ let
         lib.optionalString (gitOauth != { }) ''
           ## Sandbox git access
 
-          Git over https to ${lib.concatStringsSep ", " gitOauthHosts} is authenticated
-          with a read-only token, and ssh remotes are rewritten to https. Fetch and pull
-          work, push is refused by the server. Don't try to work around that.
+          If `$CLAUDE_SANDBOX_GIT_AUTH` is set, git over https to
+          ${lib.concatStringsSep ", " gitOauthHosts} is authenticated with a read-only
+          token, and ssh remotes are rewritten to https. Fetch and pull work, push is
+          refused by the server. Don't try to work around that. Without it, those hosts
+          are not reachable by git.
 
         ''
       }## Sandbox git worktrees
@@ -221,7 +247,7 @@ let
       # same path, --netif IFACE moves a host interface into the sandbox netns. The
       # first two repeat, and all must precede claude's own args. --exec CMD... runs
       # CMD in the sandbox instead of claude, and takes the rest of the arguments.
-      # --no-git-auth skips the git authorization at start.
+      # --git-auth turns on read-only git access over OAuth, and authorizes at start.
       (add-runtime ''
         CLAUDE_NETIF=
         CLAUDE_EXTRA_DIRS=()
@@ -239,9 +265,22 @@ let
               RUNTIME_ARGS+=(--dev-bind "$dev" "$dev")
               shift 2 ;;
             --netif) CLAUDE_NETIF=''${2:?--netif needs an interface name}; shift 2 ;;
-            --no-git-auth)
-              RUNTIME_ARGS+=(--setenv CLAUDE_SANDBOX_NO_GIT_AUTH 1)
-              shift ;;
+            --git-auth)
+              ${
+                if gitOauth == { } then
+                  ''
+                    echo "claude-sandbox: no git OAuth hosts are configured" >&2
+                    exit 1''
+                else
+                  ''
+                    RUNTIME_ARGS+=(
+                      --setenv CLAUDE_SANDBOX_GIT_AUTH 1
+                      --setenv GIT_CONFIG_COUNT 1
+                      --setenv GIT_CONFIG_KEY_0 include.path
+                      --setenv GIT_CONFIG_VALUE_0 ${gitOauthConfig}
+                    )
+                    shift''
+              } ;;
             --exec)
               shift
               [ $# -gt 0 ] || {
