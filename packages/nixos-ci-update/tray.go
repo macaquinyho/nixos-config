@@ -130,7 +130,7 @@ func (t *tray) downloadAndDiff() error {
 	if out, err := exec.Command(t.cfg.NixStore, "--realise", path).CombinedOutput(); err != nil {
 		return fmt.Errorf("downloading: %s", out)
 	}
-	diff, err := exec.Command(t.cfg.Dix, "--color", "always", currentSystem(), path).Output()
+	diff, err := exec.Command(t.cfg.Dix, "diff", "--color", "always", currentSystem(), path).Output()
 	if err != nil {
 		return fmt.Errorf("dix: %w", err)
 	}
