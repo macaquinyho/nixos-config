@@ -40,7 +40,6 @@ let
     repomix
     ripgrep
     git-lfs
-    config.custom.flake.packages.${pkgs.stdenv.hostPlatform.system}.claude-code
   ];
 
   gitBase = (
@@ -212,7 +211,16 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    users.users.arnau.packages = devPackages ++ [ cfg.gitPackage ];
+    users.users.arnau.packages = devPackages ++ [
+      cfg.gitPackage
+      (config.custom.flake.packages.${pkgs.stdenv.hostPlatform.system}.claude-sandbox.override {
+        inherit (cfg) gitPackage claudeSettings;
+        extraMcpServers = cfg.claudeMcpServers;
+        extraAllowedHosts = cfg.claudeAllowedHosts;
+        nixDaemon = !config.custom.common.trustedUser;
+        nixPackage = config.nix.package;
+      })
+    ];
 
     # global CLAUDE.md and settings.json
     systemd.tmpfiles.rules =
@@ -248,15 +256,6 @@ in
       vimdev = "${
         config.custom.flake.packages.${pkgs.stdenv.hostPlatform.system}.nvim-mnw.devMode
       }/bin/nvim";
-      claude = lib.getExe (
-        config.custom.flake.packages.${pkgs.stdenv.hostPlatform.system}.claude-sandbox.override {
-          inherit (cfg) gitPackage claudeSettings;
-          extraMcpServers = cfg.claudeMcpServers;
-          extraAllowedHosts = cfg.claudeAllowedHosts;
-          nixDaemon = !config.custom.common.trustedUser;
-          nixPackage = config.nix.package;
-        }
-      );
       pi = lib.getExe (
         config.custom.flake.packages.${pkgs.stdenv.hostPlatform.system}.pi-sandbox.override {
           inherit (cfg) gitPackage;

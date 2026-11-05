@@ -4,6 +4,7 @@
   claude-code,
   mcp-victoriametrics,
   writeText,
+  symlinkJoin,
   cacert,
   claude-sandbox-proxy,
   gnugrep,
@@ -151,257 +152,265 @@ let
     )
   }";
 
-in
-jail "claude-sandbox" (claude-code.override { inherit extraMcpServers; }) (
-  with jail.combinators;
-  [
+  jailed = jail "claude" (claude-code.override { inherit extraMcpServers; }) (
+    with jail.combinators;
+    [
 
-    time-zone
-    (bind-pkg "/etc/ssl/certs/ca-certificates.crt" "${cacert}/etc/ssl/certs/ca-bundle.crt")
-    (set-env "SSL_CERT_FILE" "/etc/ssl/certs/ca-certificates.crt")
-    (write-text "/etc/hosts" ''
-      127.0.0.1 localhost
-      ::1 localhost
-    '')
+      time-zone
+      (bind-pkg "/etc/ssl/certs/ca-certificates.crt" "${cacert}/etc/ssl/certs/ca-bundle.crt")
+      (set-env "SSL_CERT_FILE" "/etc/ssl/certs/ca-certificates.crt")
+      (write-text "/etc/hosts" ''
+        127.0.0.1 localhost
+        ::1 localhost
+      '')
 
-    (add-runtime ''
-      CLAUDE_RUN_DIR=$(mktemp -d)
-      mkdir "$CLAUDE_RUN_DIR/run"
+      (add-runtime ''
+        CLAUDE_RUN_DIR=$(mktemp -d)
+        mkdir "$CLAUDE_RUN_DIR/run"
 
-      CLAUDE_HOST_TMP_ROOT="''${XDG_RUNTIME_DIR:?}/claude-sandbox-tmp"
-      mkdir -p "$CLAUDE_HOST_TMP_ROOT"
-      CLAUDE_HOST_TMP=$(mktemp -d -p "$CLAUDE_HOST_TMP_ROOT")
-      RUNTIME_ARGS+=(
-        --bind "$CLAUDE_HOST_TMP" /tmp
-        --setenv CLAUDE_SANDBOX_HOST_TMP "$CLAUDE_HOST_TMP"
-      )
-
-      CLAUDE_PROXY_DIR="''${XDG_RUNTIME_DIR:?}/claude-sandbox-proxy"
-      mkdir -p "$CLAUDE_PROXY_DIR"
-      ${ensureProxy} ${proxyUnit} ${lib.escapeShellArg proxyDescription} "$CLAUDE_PROXY_DIR/proxy.sock" \
-        ${proxyExe} serve ${lib.escapeShellArgs hosts}
-
-      exec {CLAUDE_LOG_FD}> >(exec ${proxyExe} journal "claude-sandbox-bridge@$PWD")
-      RUNTIME_ARGS+=(--setenv CLAUDE_SANDBOX_LOG_FD "$CLAUDE_LOG_FD")
-    '')
-    # --dev-bind PATH binds a host device node, --add-dir DIR mounts a directory at the
-    # same path, --netif IFACE moves a host interface into the sandbox netns. The
-    # first two repeat, and all must precede claude's own args.
-    (add-runtime ''
-      CLAUDE_NETIF=
-      CLAUDE_EXTRA_DIRS=()
-      while [ $# -gt 0 ]; do
-        case $1 in
-          --add-dir)
-            [ -d "''${2:?--add-dir needs a directory}" ] || {
-              echo "claude-sandbox: $2 is not a directory" >&2
-              exit 1
-            }
-            CLAUDE_EXTRA_DIRS+=("$2")
-            shift 2 ;;
-          --dev-bind)
-            dev=''${2:?--dev-bind needs a device path}
-            RUNTIME_ARGS+=(--dev-bind "$dev" "$dev")
-            shift 2 ;;
-          --netif) CLAUDE_NETIF=''${2:?--netif needs an interface name}; shift 2 ;;
-          *) break ;;
-        esac
-      done
-
-      if [ -n "$CLAUDE_NETIF" ]; then
-        if [ ! -d "/sys/class/net/$CLAUDE_NETIF" ]; then
-          echo "claude-sandbox: no interface $CLAUDE_NETIF" >&2
-          exit 1
-        fi
-        # bwrap reports the in-namespace pid on this fd, and the interface has to be
-        # moved by the pid that owns the netns
-        exec {CLAUDE_STATUS_FD}> >(
-          read -r status
-          pid=$(${lib.getExe jq} -r '."child-pid"' <<< "$status")
-          /run/wrappers/bin/sudo ${iproute2}/bin/ip link set "$CLAUDE_NETIF" netns "$pid" ||
-            echo "claude-sandbox: could not move $CLAUDE_NETIF" >&2
-          cat > /dev/null
-        )
-        # --dev makes bwrap nest a second userns to drop to the real uid, and caps
-        # there don't apply to the netns, which the outer userns owns
+        CLAUDE_HOST_TMP_ROOT="''${XDG_RUNTIME_DIR:?}/claude-sandbox-tmp"
+        mkdir -p "$CLAUDE_HOST_TMP_ROOT"
+        CLAUDE_HOST_TMP=$(mktemp -d -p "$CLAUDE_HOST_TMP_ROOT")
         RUNTIME_ARGS+=(
-          --json-status-fd "$CLAUDE_STATUS_FD"
-          --uid 0 --gid 0
-          --cap-add CAP_NET_ADMIN --cap-add CAP_NET_RAW
-          --setenv CLAUDE_SANDBOX_NETIF "$CLAUDE_NETIF"
+          --bind "$CLAUDE_HOST_TMP" /tmp
+          --setenv CLAUDE_SANDBOX_HOST_TMP "$CLAUDE_HOST_TMP"
         )
-      fi
-    '')
 
-    (add-cleanup ''
-      if [ -n "''${CLAUDE_RUN_DIR-}" ]; then
-        rm -rf "$CLAUDE_RUN_DIR"
-      fi
-    '')
-    (rw-bind (noescape "\"$CLAUDE_RUN_DIR/run\"") runDir)
-    (ro-bind (noescape "\"$CLAUDE_PROXY_DIR\"") proxyDir)
+        CLAUDE_PROXY_DIR="''${XDG_RUNTIME_DIR:?}/claude-sandbox-proxy"
+        mkdir -p "$CLAUDE_PROXY_DIR"
+        ${ensureProxy} ${proxyUnit} ${lib.escapeShellArg proxyDescription} "$CLAUDE_PROXY_DIR/proxy.sock" \
+          ${proxyExe} serve ${lib.escapeShellArgs hosts}
 
-    (wrap-entry (entry: ''
-      if [ -r ${devEnvFile} ]; then
-        # print-dev-env saves PATH and appends it back, so the jail's own
-        # tools survive the dev shell's
-        set +u
-        # shellcheck disable=SC1091
-        . ${devEnvFile}
-        set -u
-      fi
-      if [ -n "''${CLAUDE_SANDBOX_NETIF-}" ]; then
-        # the host moves the interface in once bwrap has created the netns
-        for _ in $(seq 600); do
-          ip link show "$CLAUDE_SANDBOX_NETIF" > /dev/null 2>&1 && break
-          sleep 0.1
-        done
-      fi
-      exec ${proxyExe} bridge 127.0.0.1:${toString proxyPort} ${proxyDir}/proxy.sock -- ${entry}
-    ''))
-    (set-env "HTTP_PROXY" proxyUrl)
-    (set-env "HTTPS_PROXY" proxyUrl)
-    (set-env "http_proxy" proxyUrl)
-    (set-env "https_proxy" proxyUrl)
-    (set-env "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" "1")
-    no-new-session
-
-    # one login, one history and one set of settings for every workspace,
-    # under ~/.local/share/jail.nix/home/claude-code
-    (persist-home "claude-code")
-
-    # global CLAUDE.md
-    (bind-pkg (noescape "~/.claude/CLAUDE.md") claudeMdFile)
-
-    mount-cwd
-  ]
-  ++ lib.optional (claudeSettings != null) (
-    bind-pkg (noescape "~/.claude/settings.json") claudeSettingsFile
-  )
-  ++ [
-
-  ]
-  ++ (
-    if nixDaemon then
-      [
-        (readonly "/nix/store")
-        (readwrite "/nix/var/nix/daemon-socket")
-        (readonly "/etc/nix")
-        (try-readonly "/etc/static")
-        (set-env "NIX_REMOTE" "daemon")
-        (add-pkg-deps [ nixPackage ])
-        (add-runtime ''
-          if nix print-dev-env > "$CLAUDE_RUN_DIR/devenv" 2> /dev/null; then
-            mv "$CLAUDE_RUN_DIR/devenv" "$CLAUDE_RUN_DIR/run/devenv"
-          fi
-        '')
-      ]
-    else
-      [
-        # mount the runtime closure of the dev shell's inputs, if this is a flake
-        # with devShells.<system>.default. print-dev-env is still run for the env
-        # vars wrap-entry sources; the mounts come from the devShell derivation's
-        # direct inputs -> their outputs -> runtime requisites, which avoids
-        # scraping store paths out of the print-dev-env script text.
-        (add-runtime ''
-          if nix print-dev-env > "$CLAUDE_RUN_DIR/devenv" 2> /dev/null; then
-            mv "$CLAUDE_RUN_DIR/devenv" "$CLAUDE_RUN_DIR/run/devenv"
-            sys=$(nix eval --raw --impure --expr builtins.currentSystem)
-            if drv=$(nix eval --raw ".#devShells.$sys.default.drvPath" 2> /dev/null); then
-              nix-store --query --references "$drv" \
-                | ${lib.getExe gnugrep} '\.drv$' \
-                | ${findutils}/bin/xargs -r nix-store --query --outputs 2> /dev/null \
-                | sort -u \
-                | while read -r p; do nix-store --query --requisites "$p" 2> /dev/null || true; done \
-                | sort -u \
-                | while read -r p; do printf '%s\0%s\0%s\0' --ro-bind "$p" "$p"; done \
-                > "$CLAUDE_RUN_DIR/binds"
-              exec {CLAUDE_DEV_FD}< "$CLAUDE_RUN_DIR/binds"
-              RUNTIME_ARGS+=(--args "$CLAUDE_DEV_FD")
-            fi
-          fi
-        '')
-      ]
-  )
-  ++ [
-
-    # --add-dir paths are writable. For them and the cwd, other worktrees are
-    # mounted read-only, with their git admin dirs, so they can't be removed. The
-    # rest of the git dir stays writable.
-    # Worktree .git files point to these by absolute path, so paths are kept.
-    (add-runtime ''
-      claude_rw_roots=("$(pwd -P)")
-      for dir in "''${CLAUDE_EXTRA_DIRS[@]}"; do
-        p=$(realpath -e -- "$dir")
-        claude_rw_roots+=("$p")
-        RUNTIME_ARGS+=(--bind "$p" "$p")
-      done
-      claude_covered() {
-        local r
-        for r in "''${claude_rw_roots[@]}"; do
-          case $1/ in
-            "$r"/*) return 0 ;;
+        exec {CLAUDE_LOG_FD}> >(exec ${proxyExe} journal "claude-sandbox-bridge@$PWD")
+        RUNTIME_ARGS+=(--setenv CLAUDE_SANDBOX_LOG_FD "$CLAUDE_LOG_FD")
+      '')
+      # --dev-bind PATH binds a host device node, --add-dir DIR mounts a directory at the
+      # same path, --netif IFACE moves a host interface into the sandbox netns. The
+      # first two repeat, and all must precede claude's own args.
+      (add-runtime ''
+        CLAUDE_NETIF=
+        CLAUDE_EXTRA_DIRS=()
+        while [ $# -gt 0 ]; do
+          case $1 in
+            --add-dir)
+              [ -d "''${2:?--add-dir needs a directory}" ] || {
+                echo "claude-sandbox: $2 is not a directory" >&2
+                exit 1
+              }
+              CLAUDE_EXTRA_DIRS+=("$2")
+              shift 2 ;;
+            --dev-bind)
+              dev=''${2:?--dev-bind needs a device path}
+              RUNTIME_ARGS+=(--dev-bind "$dev" "$dev")
+              shift 2 ;;
+            --netif) CLAUDE_NETIF=''${2:?--netif needs an interface name}; shift 2 ;;
+            *) break ;;
           esac
         done
-        return 1
-      }
-      claude_bind_git() {
-        local common wt p
-        common=$(${git}/bin/git -C "$1" rev-parse --path-format=absolute --git-common-dir 2> /dev/null) || return 0
-        while read -r wt; do
-          p=$(realpath -e -- "$wt" 2> /dev/null) || continue
-          claude_covered "$p" || RUNTIME_ARGS+=(--ro-bind "$p" "$p")
-        done < <(${git}/bin/git -C "$1" worktree list --porcelain | ${gnused}/bin/sed -n 's/^worktree //p')
-        # after the worktrees, so it is not hidden by the read-only mount of one
-        common=$(realpath -e -- "$common")
-        claude_covered "$common" || RUNTIME_ARGS+=(--bind "$common" "$common")
-        # git unregisters a worktree even when deleting its files fails
-        for d in "$common"/worktrees/*/; do
-          d=''${d%/}
-          [ -f "$d/gitdir" ] || continue
-          claude_covered "$(dirname "$(< "$d/gitdir")")" || RUNTIME_ARGS+=(--ro-bind "$d" "$d")
+
+        if [ -n "$CLAUDE_NETIF" ]; then
+          if [ ! -d "/sys/class/net/$CLAUDE_NETIF" ]; then
+            echo "claude-sandbox: no interface $CLAUDE_NETIF" >&2
+            exit 1
+          fi
+          # bwrap reports the in-namespace pid on this fd, and the interface has to be
+          # moved by the pid that owns the netns
+          exec {CLAUDE_STATUS_FD}> >(
+            read -r status
+            pid=$(${lib.getExe jq} -r '."child-pid"' <<< "$status")
+            /run/wrappers/bin/sudo ${iproute2}/bin/ip link set "$CLAUDE_NETIF" netns "$pid" ||
+              echo "claude-sandbox: could not move $CLAUDE_NETIF" >&2
+            cat > /dev/null
+          )
+          # --dev makes bwrap nest a second userns to drop to the real uid, and caps
+          # there don't apply to the netns, which the outer userns owns
+          RUNTIME_ARGS+=(
+            --json-status-fd "$CLAUDE_STATUS_FD"
+            --uid 0 --gid 0
+            --cap-add CAP_NET_ADMIN --cap-add CAP_NET_RAW
+            --setenv CLAUDE_SANDBOX_NETIF "$CLAUDE_NETIF"
+          )
+        fi
+      '')
+
+      (add-cleanup ''
+        if [ -n "''${CLAUDE_RUN_DIR-}" ]; then
+          rm -rf "$CLAUDE_RUN_DIR"
+        fi
+      '')
+      (rw-bind (noescape "\"$CLAUDE_RUN_DIR/run\"") runDir)
+      (ro-bind (noescape "\"$CLAUDE_PROXY_DIR\"") proxyDir)
+
+      (wrap-entry (entry: ''
+        if [ -r ${devEnvFile} ]; then
+          # print-dev-env saves PATH and appends it back, so the jail's own
+          # tools survive the dev shell's
+          set +u
+          # shellcheck disable=SC1091
+          . ${devEnvFile}
+          set -u
+        fi
+        if [ -n "''${CLAUDE_SANDBOX_NETIF-}" ]; then
+          # the host moves the interface in once bwrap has created the netns
+          for _ in $(seq 600); do
+            ip link show "$CLAUDE_SANDBOX_NETIF" > /dev/null 2>&1 && break
+            sleep 0.1
+          done
+        fi
+        exec ${proxyExe} bridge 127.0.0.1:${toString proxyPort} ${proxyDir}/proxy.sock -- ${entry}
+      ''))
+      (set-env "HTTP_PROXY" proxyUrl)
+      (set-env "HTTPS_PROXY" proxyUrl)
+      (set-env "http_proxy" proxyUrl)
+      (set-env "https_proxy" proxyUrl)
+      (set-env "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" "1")
+      no-new-session
+
+      # one login, one history and one set of settings for every workspace,
+      # under ~/.local/share/jail.nix/home/claude-code
+      (persist-home "claude-code")
+
+      # global CLAUDE.md
+      (bind-pkg (noescape "~/.claude/CLAUDE.md") claudeMdFile)
+
+      mount-cwd
+    ]
+    ++ lib.optional (claudeSettings != null) (
+      bind-pkg (noescape "~/.claude/settings.json") claudeSettingsFile
+    )
+    ++ [
+
+    ]
+    ++ (
+      if nixDaemon then
+        [
+          (readonly "/nix/store")
+          (readwrite "/nix/var/nix/daemon-socket")
+          (readonly "/etc/nix")
+          (try-readonly "/etc/static")
+          (set-env "NIX_REMOTE" "daemon")
+          (add-pkg-deps [ nixPackage ])
+          (add-runtime ''
+            if nix print-dev-env > "$CLAUDE_RUN_DIR/devenv" 2> /dev/null; then
+              mv "$CLAUDE_RUN_DIR/devenv" "$CLAUDE_RUN_DIR/run/devenv"
+            fi
+          '')
+        ]
+      else
+        [
+          # mount the runtime closure of the dev shell's inputs, if this is a flake
+          # with devShells.<system>.default. print-dev-env is still run for the env
+          # vars wrap-entry sources; the mounts come from the devShell derivation's
+          # direct inputs -> their outputs -> runtime requisites, which avoids
+          # scraping store paths out of the print-dev-env script text.
+          (add-runtime ''
+            if nix print-dev-env > "$CLAUDE_RUN_DIR/devenv" 2> /dev/null; then
+              mv "$CLAUDE_RUN_DIR/devenv" "$CLAUDE_RUN_DIR/run/devenv"
+              sys=$(nix eval --raw --impure --expr builtins.currentSystem)
+              if drv=$(nix eval --raw ".#devShells.$sys.default.drvPath" 2> /dev/null); then
+                nix-store --query --references "$drv" \
+                  | ${lib.getExe gnugrep} '\.drv$' \
+                  | ${findutils}/bin/xargs -r nix-store --query --outputs 2> /dev/null \
+                  | sort -u \
+                  | while read -r p; do nix-store --query --requisites "$p" 2> /dev/null || true; done \
+                  | sort -u \
+                  | while read -r p; do printf '%s\0%s\0%s\0' --ro-bind "$p" "$p"; done \
+                  > "$CLAUDE_RUN_DIR/binds"
+                exec {CLAUDE_DEV_FD}< "$CLAUDE_RUN_DIR/binds"
+                RUNTIME_ARGS+=(--args "$CLAUDE_DEV_FD")
+              fi
+            fi
+          '')
+        ]
+    )
+    ++ [
+
+      # --add-dir paths are writable. For them and the cwd, other worktrees are
+      # mounted read-only, with their git admin dirs, so they can't be removed. The
+      # rest of the git dir stays writable.
+      # Worktree .git files point to these by absolute path, so paths are kept.
+      (add-runtime ''
+        claude_rw_roots=("$(pwd -P)")
+        for dir in "''${CLAUDE_EXTRA_DIRS[@]}"; do
+          p=$(realpath -e -- "$dir")
+          claude_rw_roots+=("$p")
+          RUNTIME_ARGS+=(--bind "$p" "$p")
         done
-      }
-      claude_bind_git .
-      for dir in "''${CLAUDE_EXTRA_DIRS[@]}"; do
-        claude_bind_git "$dir"
-      done
-    '')
+        claude_covered() {
+          local r
+          for r in "''${claude_rw_roots[@]}"; do
+            case $1/ in
+              "$r"/*) return 0 ;;
+            esac
+          done
+          return 1
+        }
+        claude_bind_git() {
+          local common wt p
+          common=$(${git}/bin/git -C "$1" rev-parse --path-format=absolute --git-common-dir 2> /dev/null) || return 0
+          while read -r wt; do
+            p=$(realpath -e -- "$wt" 2> /dev/null) || continue
+            claude_covered "$p" || RUNTIME_ARGS+=(--ro-bind "$p" "$p")
+          done < <(${git}/bin/git -C "$1" worktree list --porcelain | ${gnused}/bin/sed -n 's/^worktree //p')
+          # after the worktrees, so it is not hidden by the read-only mount of one
+          common=$(realpath -e -- "$common")
+          claude_covered "$common" || RUNTIME_ARGS+=(--bind "$common" "$common")
+          # git unregisters a worktree even when deleting its files fails
+          for d in "$common"/worktrees/*/; do
+            d=''${d%/}
+            [ -f "$d/gitdir" ] || continue
+            claude_covered "$(dirname "$(< "$d/gitdir")")" || RUNTIME_ARGS+=(--ro-bind "$d" "$d")
+          done
+        }
+        claude_bind_git .
+        for dir in "''${CLAUDE_EXTRA_DIRS[@]}"; do
+          claude_bind_git "$dir"
+        done
+      '')
 
-    # claude reaches for /bin/bash for its shell tool
-    (ro-bind "${bash}/bin/bash" "/bin/bash")
-    # for #!/usr/bin/env shebangs (prek hooks)
-    (ro-bind "${coreutils}/bin/env" "/usr/bin/env")
-    (set-env "SHELL" "/bin/bash")
+      # claude reaches for /bin/bash for its shell tool
+      (ro-bind "${bash}/bin/bash" "/bin/bash")
+      # for #!/usr/bin/env shebangs (prek hooks)
+      (ro-bind "${coreutils}/bin/env" "/usr/bin/env")
+      (set-env "SHELL" "/bin/bash")
 
-    (add-pkg-deps [
-      mcp-victoriametrics
-      bash
-      coreutils
-      curl
-      fd
-      file
-      gitPackage
-      git-lfs
-      gnugrep
-      gnumake
-      gnused
-      iproute2
-      jq
-      just
-      python313
-      ripgrep
-      tree
-      uv
-    ])
+      (add-pkg-deps [
+        mcp-victoriametrics
+        bash
+        coreutils
+        curl
+        fd
+        file
+        gitPackage
+        git-lfs
+        gnugrep
+        gnumake
+        gnused
+        iproute2
+        jq
+        just
+        python313
+        ripgrep
+        tree
+        uv
+      ])
 
-    (try-fwd-env "COLORTERM")
-    # point claude at another Anthropic-compatible endpoint, e.g. a local llama-server
-    (try-fwd-env "ANTHROPIC_BASE_URL")
-    (try-fwd-env "ANTHROPIC_AUTH_TOKEN")
-    (try-fwd-env "ANTHROPIC_MODEL")
-    (try-fwd-env "ANTHROPIC_DEFAULT_OPUS_MODEL")
-    (try-fwd-env "ANTHROPIC_DEFAULT_SONNET_MODEL")
-    (try-fwd-env "ANTHROPIC_DEFAULT_HAIKU_MODEL")
-  ]
-)
+      (try-fwd-env "COLORTERM")
+      # point claude at another Anthropic-compatible endpoint, e.g. a local llama-server
+      (try-fwd-env "ANTHROPIC_BASE_URL")
+      (try-fwd-env "ANTHROPIC_AUTH_TOKEN")
+      (try-fwd-env "ANTHROPIC_MODEL")
+      (try-fwd-env "ANTHROPIC_DEFAULT_OPUS_MODEL")
+      (try-fwd-env "ANTHROPIC_DEFAULT_SONNET_MODEL")
+      (try-fwd-env "ANTHROPIC_DEFAULT_HAIKU_MODEL")
+    ]
+  );
+in
+symlinkJoin {
+  name = "claude";
+  paths = [ jailed ];
+  postBuild = ''
+    install -Dm444 ${./claude-sandbox-completion.bash} $out/share/bash-completion/completions/claude
+  '';
+  meta.mainProgram = "claude";
+}
