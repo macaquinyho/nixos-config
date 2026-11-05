@@ -13,6 +13,7 @@
     ./ci-updates.nix
     ./dev.nix
     ./gitlab-runner.nix
+    ./remote-builder.nix
     ./monitoring
     ./to-upstream
     ./hetzner.nix
