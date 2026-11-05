@@ -17,7 +17,7 @@ _claude_sandbox() {
       --add-dir) mapfile -t COMPREPLY < <(compgen -d -- "$cur") ;;
     esac
   elif [[ $cur == -* ]]; then
-    mapfile -t COMPREPLY < <(compgen -W "--dev-bind --netif --add-dir" -- "$cur")
+    mapfile -t COMPREPLY < <(compgen -W "--dev-bind --netif --add-dir --exec" -- "$cur")
   fi
 }
 complete -o default -F _claude_sandbox claude

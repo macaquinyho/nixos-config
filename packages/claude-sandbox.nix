@@ -186,7 +186,8 @@ let
       '')
       # --dev-bind PATH binds a host device node, --add-dir DIR mounts a directory at the
       # same path, --netif IFACE moves a host interface into the sandbox netns. The
-      # first two repeat, and all must precede claude's own args.
+      # first two repeat, and all must precede claude's own args. --exec CMD... runs
+      # CMD in the sandbox instead of claude, and takes the rest of the arguments.
       (add-runtime ''
         CLAUDE_NETIF=
         CLAUDE_EXTRA_DIRS=()
@@ -204,6 +205,14 @@ let
               RUNTIME_ARGS+=(--dev-bind "$dev" "$dev")
               shift 2 ;;
             --netif) CLAUDE_NETIF=''${2:?--netif needs an interface name}; shift 2 ;;
+            --exec)
+              shift
+              [ $# -gt 0 ] || {
+                echo "claude-sandbox: --exec needs a command" >&2
+                exit 1
+              }
+              RUNTIME_ARGS+=(--setenv CLAUDE_SANDBOX_EXEC 1)
+              break ;;
             *) break ;;
           esac
         done
@@ -256,6 +265,9 @@ let
             ip link show "$CLAUDE_SANDBOX_NETIF" > /dev/null 2>&1 && break
             sleep 0.1
           done
+        fi
+        if [ -n "''${CLAUDE_SANDBOX_EXEC-}" ]; then
+          exec ${proxyExe} bridge 127.0.0.1:${toString proxyPort} ${proxyDir}/proxy.sock -- "$@"
         fi
         exec ${proxyExe} bridge 127.0.0.1:${toString proxyPort} ${proxyDir}/proxy.sock -- ${entry}
       ''))
