@@ -42,10 +42,6 @@ in
         enable = true;
         package = pkgs.callPackage ../../../packages/caddy { };
       };
-
-      systemd.services.caddy.serviceConfig = {
-        EnvironmentFile = "${config.age.secrets.duckdns.path}";
-      };
     })
     (lib.mkIf cfg.enablevps {
       virtualisation.oci-containers.backend = "docker";
