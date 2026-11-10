@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -130,8 +131,10 @@ func (t *tray) downloadAndDiff() error {
 	if out, err := exec.Command(t.cfg.NixStore, "--realise", path).CombinedOutput(); err != nil {
 		return fmt.Errorf("downloading: %s", out)
 	}
-	diff, err := exec.Command(t.cfg.Dix, "diff", "--color", "always", currentSystem(), path).Output()
-	if err != nil {
+	diff, err := exec.Command(t.cfg.Dix, "--color", "always", currentSystem(), path).Output()
+	if exitErr := (*exec.ExitError)(nil); errors.As(err, &exitErr) {
+		return fmt.Errorf("dix: %w: %s", err, exitErr.Stderr)
+	} else if err != nil {
 		return fmt.Errorf("dix: %w", err)
 	}
 	if err := os.WriteFile(diffPath(), diff, 0o644); err != nil {
