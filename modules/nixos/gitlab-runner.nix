@@ -23,7 +23,18 @@ in
       owner = "gitlab-runner";
       group = "gitlab-runner";
     };
-    age.secrets.ci-deploy-ssh-key.owner = "gitlab-runner";
+    age.secrets.ci-deploy-ssh-key = {
+      owner = "gitlab-runner";
+      generator.script =
+        { pkgs, file, ... }:
+        ''
+          tmp=$(mktemp -d)
+          ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C gitlab-ci-deploy -f "$tmp/key"
+          cp "$tmp/key.pub" ${lib.escapeShellArg (lib.removeSuffix ".age" file + ".pub")}
+          cat "$tmp/key"
+          rm -r "$tmp"
+        '';
+    };
 
     # the deploy job's ssh pins each target's key under its name
     programs.ssh.knownHosts =

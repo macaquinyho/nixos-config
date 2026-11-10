@@ -322,6 +322,7 @@ in
       };
     };
 
+    age.secrets.telegram-bot-token = { };
     systemd.services.alertmanager.serviceConfig.LoadCredential = [
       "telegram-bot-token:${config.age.secrets.telegram-bot-token.path}"
     ];

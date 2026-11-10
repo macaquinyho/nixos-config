@@ -82,7 +82,15 @@ in
 
     (lib.mkIf cfg.client.enable {
       # the daemon runs as root, which is who opens the connection
-      age.secrets.remote-builder-key = { };
+      age.secrets.remote-builder-key.generator.script =
+        { pkgs, file, ... }:
+        ''
+          tmp=$(mktemp -d)
+          ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C remote-builder-${config.networking.hostName} -f "$tmp/key"
+          cp "$tmp/key.pub" ${lib.escapeShellArg (lib.removeSuffix ".age" file + ".pub")}
+          cat "$tmp/key"
+          rm -r "$tmp"
+        '';
 
       nix.distributedBuilds = true;
       # the builder fetches from the caches itself, not through this host
