@@ -10,8 +10,9 @@ require("oil").setup()
 require("fzf-lua").setup({})
 
 -- Treesitter
-require("nvim-treesitter.configs").setup({
-  highlight = { enable = true },
+vim.api.nvim_create_autocmd("FileType", {
+  -- not every filetype has a parser
+  callback = function() pcall(vim.treesitter.start) end,
 })
 
 -- Render markdown

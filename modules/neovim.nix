@@ -28,7 +28,7 @@
       fzf-lua
       vim-tmux-navigator
       luasnip
-      nvim-treesitter-legacy.withAllGrammars
+      nvim-treesitter.withAllGrammars
       vim-fugitive
       kanagawa-nvim
       nvim-web-devicons
