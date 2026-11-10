@@ -5,6 +5,7 @@
   mcp-victoriametrics,
   writeText,
   writeShellScript,
+  writeShellScriptBin,
   git-credential-oauth,
   symlinkJoin,
   cacert,
@@ -501,7 +502,10 @@ let
 in
 symlinkJoin {
   name = "claude";
-  paths = [ jailed ];
+  # so tmux shows claude, not the jail's bash
+  paths = [
+    (writeShellScriptBin "claude" ''exec -a claude ${lib.getExe bash} ${lib.getExe jailed} "$@"'')
+  ];
   postBuild = ''
     install -Dm444 ${./claude-sandbox-completion.bash} $out/share/bash-completion/completions/claude
   '';
