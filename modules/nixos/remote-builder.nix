@@ -37,6 +37,10 @@ in
                   default = name;
                   description = "Address ssh connects to.";
                 };
+                port = lib.mkOption {
+                  type = lib.types.port;
+                  default = 22;
+                };
                 publicKey = lib.mkOption {
                   type = lib.types.str;
                   default = flakeHosts.${name}.config.age.rekey.hostPubkey;
@@ -111,7 +115,7 @@ in
       programs.ssh.knownHosts = lib.mapAttrs' (
         name: m:
         lib.nameValuePair "remote-builder-${name}" {
-          hostNames = [ m.hostName ];
+          hostNames = [ (if m.port == 22 then m.hostName else "[${m.hostName}]:${toString m.port}") ];
           inherit (m) publicKey;
         }
       ) cfg.client.machines;
@@ -120,6 +124,7 @@ in
       programs.ssh.extraConfig = lib.concatMapStrings (m: ''
         Host ${m.hostName}
           ConnectTimeout 5
+          Port ${toString m.port}
       '') (lib.attrValues cfg.client.machines);
     })
   ];
