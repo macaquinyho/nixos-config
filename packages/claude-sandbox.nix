@@ -244,7 +244,7 @@ let
         exec {CLAUDE_LOG_FD}> >(exec ${proxyExe} journal "claude-sandbox-bridge@$PWD")
         RUNTIME_ARGS+=(--setenv CLAUDE_SANDBOX_LOG_FD "$CLAUDE_LOG_FD")
       '')
-      # --dev-bind PATH binds a host device node, --add-dir DIR mounts a directory at the
+      # --dev-bind PATH binds a host device node, --add-dir DIR... mounts directories at the
       # same path, --netif IFACE moves a host interface into the sandbox netns. The
       # first two repeat, and all must precede claude's own args. --exec CMD... runs
       # CMD in the sandbox instead of claude, and takes the rest of the arguments.
@@ -255,12 +255,17 @@ let
         while [ $# -gt 0 ]; do
           case $1 in
             --add-dir)
-              [ -d "''${2:?--add-dir needs a directory}" ] || {
-                echo "claude-sandbox: $2 is not a directory" >&2
-                exit 1
-              }
-              CLAUDE_EXTRA_DIRS+=("$2")
-              shift 2 ;;
+              : "''${2:?--add-dir needs a directory}"
+              shift
+              # variadic like claude's own --add-dir, up to the next option
+              while [ $# -gt 0 ] && [ "''${1#-}" = "$1" ]; do
+                [ -d "$1" ] || {
+                  echo "claude-sandbox: $1 is not a directory" >&2
+                  exit 1
+                }
+                CLAUDE_EXTRA_DIRS+=("$1")
+                shift
+              done ;;
             --dev-bind)
               dev=''${2:?--dev-bind needs a device path}
               RUNTIME_ARGS+=(--dev-bind "$dev" "$dev")
