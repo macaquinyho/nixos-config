@@ -168,7 +168,11 @@
           extraHooks ? { },
         }:
         git-hooks.lib.${system}.run {
-          inherit src;
+          # only what the hooks read, so other changes don't rebuild the check
+          src = pkgs.lib.fileset.toSource {
+            root = src;
+            fileset = pkgs.lib.fileset.fileFilter (f: f.hasExt "nix" || f.name == "flake.lock") src;
+          };
           package = pkgs.prek;
           hooks = {
             nixfmt.enable = true;
