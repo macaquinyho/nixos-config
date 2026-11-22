@@ -23,6 +23,9 @@ in
       owner = "gitlab-runner";
       group = "gitlab-runner";
     };
+    # CI skips what the cache has, and a cached hit stays wrong for this long after the GC drops the path
+    nix.settings.narinfo-cache-positive-ttl = 3600;
+
     age.secrets.ci-deploy-ssh-key = {
       owner = "gitlab-runner";
       generator.script =
