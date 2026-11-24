@@ -5,6 +5,7 @@ behind SOCKET. Units with another DESCRIPTION, from an older build, are
 replaced. Returns once systemd is listening.
 """
 
+import os
 import sys
 from collections import deque
 
@@ -71,6 +72,9 @@ def main():
             ]
             socket = common + [("Listen", ("a(ss)", [("Stream", socket_path)]))]
             service = common + [("ExecStart", ("a(sasb)", [(command[0], command, False)]))]
+            # the user manager may not have the login shell's agent, git-ssh needs it
+            if agent := os.environ.get("SSH_AUTH_SOCK"):
+                service.append(("Environment", ("as", [f"SSH_AUTH_SOCK={agent}"])))
             try:
                 unit, result = run_job(
                     conn, jobs, "ssa(sv)a(sa(sv))", "StartTransientUnit",

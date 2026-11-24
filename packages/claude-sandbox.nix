@@ -4,9 +4,8 @@
   claude-code,
   mcp-victoriametrics,
   writeText,
-  writeShellScript,
   writeShellScriptBin,
-  git-credential-oauth,
+  openssh,
   symlinkJoin,
   cacert,
   claude-sandbox-proxy,
@@ -77,12 +76,9 @@
   extraAllowedHosts ? [ ],
   extraMcpServers ? { },
 
-  # host -> { clientId, scopes ? "read_repository" }. With --git-auth, git
-  # remotes on these hosts authenticate through an OAuth application of the
-  # user's, with git-credential-oauth, and ssh remotes are rewritten to https.
-  # The application is registered with only the read scope, so the sandbox
-  # cannot push.
-  gitOauth ? { },
+  # git@HOST remotes fetched through the proxy with the host's ssh key, push refused
+  gitSshHosts ? [ ],
+  sshPackage ? openssh,
 }:
 # Claude Code confined to the directory it is started in
 let
@@ -92,45 +88,6 @@ let
   runDir = "/run/claude-sandbox";
   proxyDir = "/run/claude-sandbox-proxy";
   devEnvFile = "${runDir}/devenv";
-
-  gitOauthHosts = lib.attrNames gitOauth;
-  gitOauthConfig = writeText "claude-sandbox-gitconfig" (
-    lib.generators.toGitINI {
-      credential = lib.mapAttrs' (
-        host: o:
-        lib.nameValuePair "https://${host}" {
-          oauthClientId = o.clientId;
-          oauthScopes = o.scopes or "read_repository";
-          helper = [
-            "cache --timeout 28800"
-            "oauth -device"
-          ];
-        }
-      ) gitOauth;
-      url = lib.mapAttrs' (
-        host: _:
-        lib.nameValuePair "https://${host}/" {
-          insteadOf = [
-            "git@${host}:"
-            "ssh://git@${host}/"
-          ];
-        }
-      ) gitOauth;
-    }
-  );
-  # runs under the proxy bridge, as the authorization needs the network
-  gitAuthPrime = writeShellScript "claude-sandbox-git-auth" ''
-    if [ -n "''${CLAUDE_SANDBOX_GIT_AUTH-}" ]; then
-      for host in ${lib.escapeShellArgs gitOauthHosts}; do
-        if creds=$(printf 'protocol=https\nhost=%s\n\n' "$host" | GIT_TERMINAL_PROMPT=0 git credential fill); then
-          printf '%s\n' "$creds" | git credential approve
-        else
-          echo "claude-sandbox: no git credentials for $host" >&2
-        fi
-      done
-    fi
-    exec "$@"
-  '';
 
   claudeMdFile = writeText "CLAUDE.md" (
     lib.optionalString (claudeMd != null) claudeMd
@@ -158,14 +115,13 @@ let
       in /tmp, give me that host path instead of the /tmp one.
 
       ${
-        lib.optionalString (gitOauth != { }) ''
+        lib.optionalString (gitSshHosts != [ ]) ''
           ## Sandbox git access
 
-          If `$CLAUDE_SANDBOX_GIT_AUTH` is set, git over https to
-          ${lib.concatStringsSep ", " gitOauthHosts} is authenticated with a read-only
-          token, and ssh remotes are rewritten to https. Fetch and pull work, push is
-          refused by the server. Don't try to work around that. Without it, those hosts
-          are not reachable by git.
+          git over ssh (`git@HOST:` remotes) to ${lib.concatStringsSep ", " gitSshHosts}
+          goes through the proxy, which runs ssh on the host with my key. Clone, fetch
+          and pull work. Push and other ssh commands are refused by the proxy, don't try
+          to work around that. https remotes on those hosts have no credentials.
 
         ''
       }## Sandbox git worktrees
@@ -200,6 +156,15 @@ let
   claudeSettingsFile = writeText "claude-settings.json" (builtins.toJSON claudeSettings);
 
   proxyExe = lib.getExe claude-sandbox-proxy;
+  proxyArgs = [
+    "--ssh"
+    (lib.getExe' sshPackage "ssh")
+  ]
+  ++ lib.concatMap (host: [
+    "--git-ssh-host"
+    host
+  ]) gitSshHosts
+  ++ hosts;
   ensureProxy = writers.writePython3 "claude-sandbox-ensure-proxy" {
     libraries = [ python3Packages.jeepney ];
     flakeIgnore = [ "E501" ];
@@ -208,7 +173,9 @@ let
   # tells a running proxy from an older build apart, so it gets replaced
   proxyDescription = "claude-sandbox proxy ${
     builtins.substring 0 8 (
-      builtins.hashString "sha256" (builtins.unsafeDiscardStringContext "${proxyExe} ${toString hosts}")
+      builtins.hashString "sha256" (
+        builtins.unsafeDiscardStringContext "${proxyExe} ${toString proxyArgs}"
+      )
     )
   }";
 
@@ -239,7 +206,7 @@ let
         CLAUDE_PROXY_DIR="''${XDG_RUNTIME_DIR:?}/claude-sandbox-proxy"
         mkdir -p "$CLAUDE_PROXY_DIR"
         ${ensureProxy} ${proxyUnit} ${lib.escapeShellArg proxyDescription} "$CLAUDE_PROXY_DIR/proxy.sock" \
-          ${proxyExe} serve ${lib.escapeShellArgs hosts}
+          ${proxyExe} serve ${lib.escapeShellArgs proxyArgs}
 
         exec {CLAUDE_LOG_FD}> >(exec ${proxyExe} journal "claude-sandbox-bridge@$PWD")
         RUNTIME_ARGS+=(--setenv CLAUDE_SANDBOX_LOG_FD "$CLAUDE_LOG_FD")
@@ -248,7 +215,6 @@ let
       # same path, --netif IFACE moves a host interface into the sandbox netns. The
       # first two repeat, and all must precede claude's own args. --exec CMD... runs
       # CMD in the sandbox instead of claude, and takes the rest of the arguments.
-      # --git-auth turns on read-only git access over OAuth, and authorizes at start.
       (add-runtime ''
         CLAUDE_NETIF=
         CLAUDE_EXTRA_DIRS=()
@@ -271,22 +237,6 @@ let
               RUNTIME_ARGS+=(--dev-bind "$dev" "$dev")
               shift 2 ;;
             --netif) CLAUDE_NETIF=''${2:?--netif needs an interface name}; shift 2 ;;
-            --git-auth)
-              ${
-                if gitOauth == { } then
-                  ''
-                    echo "claude-sandbox: no git OAuth hosts are configured" >&2
-                    exit 1''
-                else
-                  ''
-                    RUNTIME_ARGS+=(
-                      --setenv CLAUDE_SANDBOX_GIT_AUTH 1
-                      --setenv GIT_CONFIG_COUNT 1
-                      --setenv GIT_CONFIG_KEY_0 include.path
-                      --setenv GIT_CONFIG_VALUE_0 ${gitOauthConfig}
-                    )
-                    shift''
-              } ;;
             --exec)
               shift
               [ $# -gt 0 ] || {
@@ -351,9 +301,7 @@ let
         if [ -n "''${CLAUDE_SANDBOX_EXEC-}" ]; then
           exec ${proxyExe} bridge 127.0.0.1:${toString proxyPort} ${proxyDir}/proxy.sock -- "$@"
         fi
-        exec ${proxyExe} bridge 127.0.0.1:${toString proxyPort} ${proxyDir}/proxy.sock -- ${
-          lib.optionalString (gitOauth != { }) "${gitAuthPrime} "
-        }${entry}
+        exec ${proxyExe} bridge 127.0.0.1:${toString proxyPort} ${proxyDir}/proxy.sock -- ${entry}
       ''))
       (set-env "HTTP_PROXY" proxyUrl)
       (set-env "HTTPS_PROXY" proxyUrl)
@@ -361,7 +309,11 @@ let
       (set-env "https_proxy" proxyUrl)
       (set-env "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" "1")
     ]
-    ++ lib.optional (gitOauth != { }) (add-pkg-deps [ git-credential-oauth ])
+    ++ lib.optionals (gitSshHosts != [ ]) [
+      (set-env "GIT_SSH_COMMAND" "${proxyExe} git-ssh ${proxyDir}/proxy.sock")
+      # so git passes -p and SendEnv=GIT_PROTOCOL
+      (set-env "GIT_SSH_VARIANT" "ssh")
+    ]
     ++ [
       no-new-session
 

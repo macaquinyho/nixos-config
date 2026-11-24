@@ -82,6 +82,7 @@ dependencies = [
  "clap",
  "fast-socks5",
  "log",
+ "rustix",
  "systemd-journal-logger",
  "tokio",
 ]

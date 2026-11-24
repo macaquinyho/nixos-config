@@ -1,12 +1,13 @@
 use std::ffi::OsString;
 use std::fmt;
 use std::fs::File;
-use std::io::{self, BufRead, ErrorKind, Write};
+use std::io::{self, BufRead, ErrorKind, IoSlice, IoSliceMut, Read, Write};
+use std::mem::MaybeUninit;
 use std::net::SocketAddr;
-use std::os::fd::FromRawFd;
+use std::os::fd::{AsFd, FromRawFd, OwnedFd};
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{ExitCode, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,9 +16,14 @@ use fast_socks5::server::{Socks5ServerProtocol, SocksServerError};
 use fast_socks5::util::target_addr::TargetAddr;
 use fast_socks5::{ReplyError, Socks5Command, consts};
 use log::{Level, Record};
+use rustix::net::{
+    RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, SendAncillaryBuffer,
+    SendAncillaryMessage, SendFlags,
+};
 use systemd_journal_logger::JournalLog;
 use tokio::io::{
     AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader,
+    Interest,
 };
 use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
 use tokio::process::Command;
@@ -27,14 +33,32 @@ const MAX_HEAD: u64 = 8 * 1024;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const IDLE_EXIT: Duration = Duration::from_secs(5 * 60);
 const LOG_FD_VAR: &str = "CLAUDE_SANDBOX_LOG_FD";
+// first byte of a git-ssh request, never the start of SOCKS5 or HTTP
+const GIT_SSH_MAGIC: u8 = 0;
+// exit status for a refused git-ssh request, like ssh's own failures
+const GIT_SSH_REFUSED: u8 = 255;
 
 #[derive(Parser)]
 enum Cli {
     /// Serve on the unix socket passed by systemd socket activation, exit when idle
     Serve {
+        /// Host that git-ssh requests may fetch from, over ssh as git@HOST
+        #[arg(long = "git-ssh-host", value_name = "HOST")]
+        git_ssh_hosts: Vec<String>,
+        /// ssh client run for git-ssh requests
+        #[arg(long, default_value = "ssh")]
+        ssh: PathBuf,
         /// Allowed destinations. A leading dot in HOST also allows its subdomains.
         #[arg(value_name = "HOST:PORT", required = true, value_parser = Allowed::parse)]
         allowed: Vec<Allowed>,
+    },
+    /// Run as git's ssh command: ask the proxy behind SOCKET to run git-upload-pack
+    /// on the host, with this process's stdio
+    GitSsh {
+        socket: PathBuf,
+        /// ssh arguments, as git passes them with ssh.variant=ssh
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
     },
     /// Forward ADDR to SOCKET while COMMAND runs, then exit with its status.
     /// Logs go to the fd in CLAUDE_SANDBOX_LOG_FD, if set.
@@ -55,6 +79,8 @@ enum Error {
     BindTcp(SocketAddr, io::Error),
     Spawn(io::Error),
     Journal(io::Error),
+    GitSshArgs(String),
+    GitSsh(io::Error),
 }
 
 impl fmt::Display for Error {
@@ -65,6 +91,8 @@ impl fmt::Display for Error {
             Error::BindTcp(addr, e) => write!(f, "bind {addr}: {e}"),
             Error::Spawn(e) => write!(f, "spawn: {e}"),
             Error::Journal(e) => write!(f, "journal: {e}"),
+            Error::GitSshArgs(e) => write!(f, "git-ssh: {e}"),
+            Error::GitSsh(e) => write!(f, "git-ssh: {e}"),
         }
     }
 }
@@ -72,7 +100,18 @@ impl fmt::Display for Error {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let result = match Cli::parse() {
-        Cli::Serve { allowed } => serve(allowed).await.map(|()| ExitCode::SUCCESS),
+        Cli::Serve {
+            git_ssh_hosts,
+            ssh,
+            allowed,
+        } => serve(Config {
+            allowed,
+            git_ssh_hosts: git_ssh_hosts.iter().map(|h| normalize_host(h)).collect(),
+            ssh,
+        })
+        .await
+        .map(|()| ExitCode::SUCCESS),
+        Cli::GitSsh { socket, args } => git_ssh_client(&socket, &args),
         Cli::Bridge {
             addr,
             socket,
@@ -121,8 +160,14 @@ fn normalize_host(host: &str) -> String {
     host.trim_end_matches('.').to_ascii_lowercase()
 }
 
-async fn serve(allowed: Vec<Allowed>) -> Result<(), Error> {
-    let allowed: Arc<[Allowed]> = allowed.into();
+struct Config {
+    allowed: Vec<Allowed>,
+    git_ssh_hosts: Vec<String>,
+    ssh: PathBuf,
+}
+
+async fn serve(config: Config) -> Result<(), Error> {
+    let config = Arc::new(config);
     let listener = listen_fd()?;
     // every open tunnel holds a clone
     let tunnels = Arc::new(());
@@ -140,10 +185,10 @@ async fn serve(allowed: Vec<Allowed>) -> Result<(), Error> {
                 continue;
             }
         };
-        let (allowed, tunnel_ref) = (allowed.clone(), tunnels.clone());
+        let (config, tunnel_ref) = (config.clone(), tunnels.clone());
         tokio::spawn(async move {
             let _tunnel_ref = tunnel_ref;
-            if let Err(e) = tunnel(client, &allowed).await {
+            if let Err(e) = tunnel(client, &config).await {
                 eprintln!("{e}");
             }
         });
@@ -170,16 +215,26 @@ struct Tunnel<S> {
     upstream: TcpStream,
 }
 
-async fn tunnel(client: UnixStream, allowed: &[Allowed]) -> Result<(), String> {
-    let mut client = BufReader::new(client);
-    let Some(&first) = client
-        .fill_buf()
+async fn tunnel(client: UnixStream, config: &Config) -> Result<(), String> {
+    // peeked, as a plain read would drop the fds a git-ssh request carries
+    let mut first = [0u8];
+    let peeked = client
+        .async_io(Interest::READABLE, || {
+            rustix::net::recv(&client, &mut first[..], RecvFlags::PEEK)
+                .map(|(_, n)| n)
+                .map_err(io::Error::from)
+        })
         .await
-        .map_err(|e| format!("read: {e}"))?
-        .first()
-    else {
+        .map_err(|e| format!("read: {e}"))?;
+    let [first] = first;
+    if peeked == 0 {
         return Ok(());
-    };
+    }
+    if first == GIT_SSH_MAGIC {
+        return git_ssh_serve(client, config).await;
+    }
+    let allowed = &config.allowed[..];
+    let client = BufReader::new(client);
     let Tunnel {
         target,
         mut client,
@@ -339,6 +394,218 @@ async fn splice(a: &mut impl Stream, b: &mut impl Stream) -> io::Result<()> {
     }
 }
 
+struct GitSshRequest {
+    host: String,
+    port: Option<u16>,
+    command: String,
+    protocol: Option<String>,
+}
+
+impl GitSshRequest {
+    /// Parses DEST\0PORT\0COMMAND\0GIT_PROTOCOL, and only lets through
+    /// git-upload-pack on an allowed host, which is a fetch and never a push
+    fn parse(payload: &[u8], hosts: &[String]) -> Result<Self, String> {
+        let payload = std::str::from_utf8(payload).map_err(|_| "request is not UTF-8")?;
+        let [dest, port, command, protocol] = payload
+            .split('\0')
+            .collect::<Vec<_>>()
+            .try_into()
+            .map_err(|_| "malformed request")?;
+
+        let host = dest
+            .strip_prefix("git@")
+            .map(normalize_host)
+            .filter(|host| hosts.contains(host))
+            .ok_or_else(|| format!("{dest} is not an allowed git host"))?;
+        let port = match port {
+            "" => None,
+            port => Some(
+                port.parse()
+                    .ok()
+                    .filter(|&p| p != 0)
+                    .ok_or_else(|| format!("bad port {port}"))?,
+            ),
+        };
+        // git quotes the path in single quotes, anything else is refused
+        let path = command
+            .strip_prefix("git-upload-pack '")
+            .and_then(|rest| rest.strip_suffix('\''))
+            .filter(|path| {
+                !path.is_empty()
+                    && !path.contains(['\'', '\\'])
+                    && !path.chars().any(char::is_control)
+            });
+        if path.is_none() {
+            return Err(format!(
+                "only git-upload-pack (fetch) is allowed, not {command:?}"
+            ));
+        }
+        let protocol = match protocol {
+            "" => None,
+            "version=1" | "version=2" => Some(protocol.to_owned()),
+            _ => return Err(format!("bad GIT_PROTOCOL {protocol:?}")),
+        };
+        Ok(GitSshRequest {
+            host,
+            port,
+            command: command.to_owned(),
+            protocol,
+        })
+    }
+}
+
+async fn git_ssh_serve(mut client: UnixStream, config: &Config) -> Result<(), String> {
+    let (mut buf, fds) = recv_with_fds(&client)
+        .await
+        .map_err(|e| format!("git-ssh: read: {e}"))?;
+    let len = match buf.get(1..3) {
+        Some(&[hi, lo]) => 3 + usize::from(u16::from_be_bytes([hi, lo])),
+        _ => return Err("git-ssh: truncated request".into()),
+    };
+    if buf.len() < len {
+        let have = buf.len();
+        buf.resize(len, 0);
+        client
+            .read_exact(&mut buf[have..])
+            .await
+            .map_err(|e| format!("git-ssh: read: {e}"))?;
+    }
+    let Ok([stdin, stdout, stderr]): Result<[OwnedFd; 3], _> = fds.try_into() else {
+        let _ = client.write_u8(GIT_SSH_REFUSED).await;
+        return Err("git-ssh: expected stdin, stdout and stderr".into());
+    };
+
+    let request = match GitSshRequest::parse(&buf[3..len], &config.git_ssh_hosts) {
+        Ok(request) => request,
+        Err(e) => {
+            let _ = File::from(stderr).write_all(format!("claude-sandbox: {e}\n").as_bytes());
+            let _ = client.write_u8(GIT_SSH_REFUSED).await;
+            return Err(format!("git-ssh: {e}"));
+        }
+    };
+    let target = format!("git@{}: {}", request.host, request.command);
+    eprintln!("git-ssh {target}");
+
+    let mut child = {
+        let mut ssh = Command::new(&config.ssh);
+        // whatever ~/.ssh/config says, the session only runs the fetch
+        ssh.args(["-x", "-a", "-T", "-o", "BatchMode=yes"])
+            .args([
+                "-o",
+                "ClearAllForwardings=yes",
+                "-o",
+                "PermitLocalCommand=no",
+            ])
+            .env_remove("GIT_PROTOCOL");
+        if let Some(port) = request.port {
+            ssh.arg("-p").arg(port.to_string());
+        }
+        if let Some(protocol) = &request.protocol {
+            ssh.args(["-o", "SendEnv=GIT_PROTOCOL"])
+                .env("GIT_PROTOCOL", protocol);
+        }
+        ssh.arg("--")
+            .arg(format!("git@{}", request.host))
+            .arg(&request.command)
+            .stdin(Stdio::from(stdin))
+            .stdout(Stdio::from(stdout))
+            .stderr(Stdio::from(stderr))
+            .kill_on_drop(true);
+        // dropping the command closes our copies of the client's stdio
+        ssh.spawn().map_err(|e| format!("git-ssh {target}: {e}"))?
+    };
+
+    let status = tokio::select! {
+        status = child.wait() => status.map_err(|e| format!("git-ssh {target}: {e}"))?,
+        // the client sends nothing more, so this only returns when it is gone
+        _ = client.read_u8() => return Err(format!("git-ssh {target}: client went away")),
+    };
+    let code = status.code().or(status.signal().map(|signal| 128 + signal));
+    let code = code.map_or(GIT_SSH_REFUSED, |code| code.clamp(0, 255) as u8);
+    client
+        .write_u8(code)
+        .await
+        .map_err(|e| format!("git-ssh {target}: {e}"))
+}
+
+async fn recv_with_fds(client: &UnixStream) -> io::Result<(Vec<u8>, Vec<OwnedFd>)> {
+    let mut buf = vec![0u8; 3 + usize::from(u16::MAX)];
+    let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(3))];
+    let mut control = RecvAncillaryBuffer::new(&mut space);
+    let n = client
+        .async_io(Interest::READABLE, || {
+            rustix::net::recvmsg(
+                client,
+                &mut [IoSliceMut::new(&mut buf)],
+                &mut control,
+                RecvFlags::CMSG_CLOEXEC,
+            )
+            .map(|msg| msg.bytes)
+            .map_err(io::Error::from)
+        })
+        .await?;
+    buf.truncate(n);
+    let mut fds = Vec::new();
+    for msg in control.drain() {
+        if let RecvAncillaryMessage::ScmRights(received) = msg {
+            fds.extend(received);
+        }
+    }
+    Ok((buf, fds))
+}
+
+/// Splits git's ssh arguments, `[-o OPT] [-p PORT] [-4|-6] DEST COMMAND...`
+fn parse_ssh_args(args: &[String]) -> Result<(&str, &str, String), String> {
+    let mut port = "";
+    let mut args = args.iter().map(String::as_str);
+    let dest = loop {
+        match args.next().ok_or("no destination")? {
+            "-p" => port = args.next().ok_or("-p needs a port")?,
+            // SendEnv=GIT_PROTOCOL, which the proxy sets itself
+            "-o" => _ = args.next().ok_or("-o needs an option")?,
+            "-4" | "-6" => {}
+            "--" => break args.next().ok_or("no destination")?,
+            opt if opt.starts_with('-') => return Err(format!("unsupported ssh option {opt}")),
+            dest => break dest,
+        }
+    };
+    let command = args.collect::<Vec<_>>().join(" ");
+    if command.is_empty() {
+        return Err("no command".into());
+    }
+    Ok((dest, port, command))
+}
+
+fn git_ssh_client(socket: &Path, args: &[String]) -> Result<ExitCode, Error> {
+    let (dest, port, command) = parse_ssh_args(args).map_err(Error::GitSshArgs)?;
+    let protocol = std::env::var("GIT_PROTOCOL").unwrap_or_default();
+    let payload = [dest, port, &command, &protocol].join("\0");
+    let len =
+        u16::try_from(payload.len()).map_err(|_| Error::GitSshArgs("request too long".into()))?;
+    let mut msg = vec![GIT_SSH_MAGIC];
+    msg.extend(len.to_be_bytes());
+    msg.extend(payload.as_bytes());
+
+    let mut sock = std::os::unix::net::UnixStream::connect(socket).map_err(Error::GitSsh)?;
+    let (stdin, stdout, stderr) = (io::stdin(), io::stdout(), io::stderr());
+    let fds = [stdin.as_fd(), stdout.as_fd(), stderr.as_fd()];
+    let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(3))];
+    let mut control = SendAncillaryBuffer::new(&mut space);
+    control.push(SendAncillaryMessage::ScmRights(&fds));
+    let sent = rustix::net::sendmsg(
+        &sock,
+        &[IoSlice::new(&msg)],
+        &mut control,
+        SendFlags::empty(),
+    )
+    .map_err(|e| Error::GitSsh(e.into()))?;
+    sock.write_all(&msg[sent..]).map_err(Error::GitSsh)?;
+
+    let mut code = [0u8];
+    sock.read_exact(&mut code).map_err(Error::GitSsh)?;
+    Ok(ExitCode::from(code[0]))
+}
+
 fn take_log_fd() -> Option<File> {
     let fd = std::env::var(LOG_FD_VAR).ok()?.parse().ok()?;
     // SAFETY: the launcher opened this fd for us and nothing else in this process uses it
@@ -430,7 +697,55 @@ fn journal(identifier: String) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::Allowed;
+    use super::{Allowed, GitSshRequest, parse_ssh_args};
+
+    #[test]
+    fn git_ssh_request() {
+        let hosts = ["gitlab.com".to_owned()];
+        let parse = |s: &str| GitSshRequest::parse(s.as_bytes(), &hosts);
+
+        let ok = parse("git@GitLab.com\0\0git-upload-pack 'group/repo.git'\0version=2");
+        assert!(ok.is_ok_and(|r| r.host == "gitlab.com" && r.port.is_none()));
+        assert!(parse("git@gitlab.com\x002222\0git-upload-pack '/g/r.git'\0").is_ok());
+
+        for bad in [
+            "git@gitlab.com\0\0git-receive-pack 'g/r.git'\0",
+            "git@gitlab.com\0\0git-upload-pack 'g/r.git' ; x\0",
+            "git@gitlab.com\0\0git-upload-pack 'g/r'\\''x'\0",
+            "git@gitlab.com\0\0git-upload-pack 'g/r\nx'\0",
+            "git@gitlab.com\0\0git-upload-pack ''\0",
+            "git@gitlab.com\0\0git-lfs-authenticate 'g/r.git' download\0",
+            "git@github.com\0\0git-upload-pack 'g/r.git'\0",
+            "root@gitlab.com\0\0git-upload-pack 'g/r.git'\0",
+            "gitlab.com\0\0git-upload-pack 'g/r.git'\0",
+            "git@gitlab.com\0-oProxyCommand=x\0git-upload-pack 'g/r.git'\0",
+            "git@gitlab.com\x000\0git-upload-pack 'g/r.git'\0",
+            "git@gitlab.com\0\0git-upload-pack 'g/r.git'\0version=2:x",
+            "git@gitlab.com\0\0git-upload-pack 'g/r.git'",
+        ] {
+            assert!(parse(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn ssh_args() {
+        let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let git = args(&[
+            "-o",
+            "SendEnv=GIT_PROTOCOL",
+            "-p",
+            "2222",
+            "-4",
+            "git@h",
+            "git-upload-pack 'r'",
+        ]);
+        assert_eq!(
+            parse_ssh_args(&git),
+            Ok(("git@h", "2222", "git-upload-pack 'r'".into()))
+        );
+        assert!(parse_ssh_args(&args(&["-L", "1:x:2", "git@h", "c"])).is_err());
+        assert!(parse_ssh_args(&args(&["git@h"])).is_err());
+    }
 
     #[test]
     fn allowlist() -> Result<(), String> {

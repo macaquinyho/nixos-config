@@ -209,29 +209,13 @@ in
       description = "HOST:PORT entries added to the claude sandbox's egress allowlist.";
     };
 
-    claudeGitOauth = lib.mkOption {
-      type = lib.types.attrsOf (
-        lib.types.submodule {
-          options = {
-            clientId = lib.mkOption {
-              type = lib.types.str;
-              description = "Application id of an OAuth application registered on the host.";
-            };
-            scopes = lib.mkOption {
-              type = lib.types.str;
-              default = "read_repository";
-              description = "OAuth scopes requested. The default only allows reading.";
-            };
-          };
-        }
-      );
-      default = { };
-      example = {
-        "gitlab.example.com".clientId = "0123abcd";
-      };
+    claudeGitSshHosts = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [ "gitlab.example.com" ];
       description = ''
-        Hosts the claude sandbox reaches over https with a read-only OAuth token,
-        by host name. Git remotes on them are rewritten from ssh to https.
+        Hosts the claude sandbox can fetch from over ssh as git@HOST, with the
+        host's ssh agent and keys. Pushing is refused.
       '';
     };
   };
@@ -243,7 +227,8 @@ in
         inherit (cfg) gitPackage claudeSettings;
         extraMcpServers = cfg.claudeMcpServers;
         extraAllowedHosts = cfg.claudeAllowedHosts;
-        gitOauth = cfg.claudeGitOauth;
+        gitSshHosts = cfg.claudeGitSshHosts;
+        sshPackage = config.programs.ssh.package;
         nixDaemon = !config.custom.common.trustedUser;
         nixPackage = config.nix.package;
       })
