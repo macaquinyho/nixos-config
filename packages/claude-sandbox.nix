@@ -121,7 +121,8 @@ let
           git over ssh (`git@HOST:` remotes) to ${lib.concatStringsSep ", " gitSshHosts}
           goes through the proxy, which runs ssh on the host with my key. Clone, fetch
           and pull work. Push and other ssh commands are refused by the proxy, don't try
-          to work around that. https remotes on those hosts have no credentials.
+          to work around that. https remotes on those hosts have no credentials. LFS
+          is not available, clone repos that use it with `GIT_LFS_SKIP_SMUDGE=1`.
 
         ''
       }## Sandbox git worktrees
