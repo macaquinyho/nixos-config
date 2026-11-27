@@ -5,10 +5,12 @@
   mcp-victoriametrics,
   writeText,
   writeShellScriptBin,
+  writeShellApplication,
   openssh,
   symlinkJoin,
   cacert,
   claude-sandbox-proxy,
+  libnotify,
   gnugrep,
   findutils,
   bash,
@@ -87,6 +89,8 @@ let
   proxyUrl = "http://127.0.0.1:${toString proxyPort}";
   runDir = "/run/claude-sandbox";
   proxyDir = "/run/claude-sandbox-proxy";
+  # under $XDG_RUNTIME_DIR, never mounted in the sandbox
+  sessionsDir = "claude-sandbox-sessions";
   devEnvFile = "${runDir}/devenv";
 
   claudeMdFile = writeText "CLAUDE.md" (
@@ -99,8 +103,12 @@ let
       and a leading dot covers subdomains:
 
       ${lib.concatMapStrings (host: "- ${lib.removeSuffix ":443" host}\n") hosts}
-      Anything else gets `CONNECT tunnel failed, response 403`. Retrying won't
-      help. Ask me to allow the domain.
+      Any other host pops up a prompt on my desktop, and the connection waits up
+      to a minute for my answer. If I deny it or don't answer, it fails with
+      `CONNECT tunnel failed, response 403`. Retrying won't help for ten minutes.
+      When you know you'll need a host, ask ahead with `sandbox-request HOST[:PORT]
+      "short reason"`, which waits for my answer. I can also allow hosts from the
+      host with `claude-allow HOST`.
 
       The same proxy speaks SOCKS5 for tools that need it:
       `socks5h://127.0.0.1:${toString proxyPort}`, or directly on the unix socket
@@ -160,6 +168,8 @@ let
   proxyArgs = [
     "--ssh"
     (lib.getExe' sshPackage "ssh")
+    "--notify"
+    (lib.getExe' libnotify "notify-send")
   ]
   ++ lib.concatMap (host: [
     "--git-ssh-host"
@@ -205,9 +215,11 @@ let
         )
 
         CLAUDE_PROXY_DIR="''${XDG_RUNTIME_DIR:?}/claude-sandbox-proxy"
+        CLAUDE_SESSIONS_DIR="''${XDG_RUNTIME_DIR:?}/${sessionsDir}"
         mkdir -p "$CLAUDE_PROXY_DIR"
+        [ -d "$CLAUDE_SESSIONS_DIR" ] || mkdir -m 700 "$CLAUDE_SESSIONS_DIR"
         ${ensureProxy} ${proxyUnit} ${lib.escapeShellArg proxyDescription} "$CLAUDE_PROXY_DIR/proxy.sock" \
-          ${proxyExe} serve ${lib.escapeShellArgs proxyArgs}
+          ${proxyExe} serve --sessions "$CLAUDE_SESSIONS_DIR" ${lib.escapeShellArgs proxyArgs}
 
         exec {CLAUDE_LOG_FD}> >(exec ${proxyExe} journal "claude-sandbox-bridge@$PWD")
         RUNTIME_ARGS+=(--setenv CLAUDE_SANDBOX_LOG_FD "$CLAUDE_LOG_FD")
@@ -250,24 +262,39 @@ let
           esac
         done
 
-        if [ -n "$CLAUDE_NETIF" ]; then
-          if [ ! -d "/sys/class/net/$CLAUDE_NETIF" ]; then
-            echo "claude-sandbox: no interface $CLAUDE_NETIF" >&2
-            exit 1
+        if [ -n "$CLAUDE_NETIF" ] && [ ! -d "/sys/class/net/$CLAUDE_NETIF" ]; then
+          echo "claude-sandbox: no interface $CLAUDE_NETIF" >&2
+          exit 1
+        fi
+        # bwrap reports the in-namespace pid on this fd. Its netns identifies the
+        # session to the proxy, and an interface has to be moved by that pid.
+        exec {CLAUDE_STATUS_FD}> >(
+          read -r status
+          pid=$(${lib.getExe jq} -r '."child-pid"' <<< "$status")
+          # a shared host netns would hand this session's allowlist to every process
+          if ns=$(stat -L -c %i "/proc/$pid/ns/net") &&
+            [ "$ns" != "$(stat -L -c %i /proc/self/ns/net)" ]; then
+            session="$CLAUDE_SESSIONS_DIR/$ns"
+            # built aside and moved in whole, so claude-allow never sees it half done
+            tmp=$(mktemp -d -p "$CLAUDE_SESSIONS_DIR" .new.XXXXXX)
+            printf '%s\n' "$PWD" > "$tmp/cwd"
+            printf '%s\n' "$pid" > "$tmp/pid"
+            : > "$tmp/allow"
+            rm -rf "$session"
+            mv "$tmp" "$session"
+            printf '%s\n' "$session" > "$CLAUDE_RUN_DIR/session"
           fi
-          # bwrap reports the in-namespace pid on this fd, and the interface has to be
-          # moved by the pid that owns the netns
-          exec {CLAUDE_STATUS_FD}> >(
-            read -r status
-            pid=$(${lib.getExe jq} -r '."child-pid"' <<< "$status")
+          if [ -n "$CLAUDE_NETIF" ]; then
             /run/wrappers/bin/sudo ${iproute2}/bin/ip link set "$CLAUDE_NETIF" netns "$pid" ||
               echo "claude-sandbox: could not move $CLAUDE_NETIF" >&2
-            cat > /dev/null
-          )
+          fi
+          cat > /dev/null
+        )
+        RUNTIME_ARGS+=(--json-status-fd "$CLAUDE_STATUS_FD")
+        if [ -n "$CLAUDE_NETIF" ]; then
           # --dev makes bwrap nest a second userns to drop to the real uid, and caps
           # there don't apply to the netns, which the outer userns owns
           RUNTIME_ARGS+=(
-            --json-status-fd "$CLAUDE_STATUS_FD"
             --uid 0 --gid 0
             --cap-add CAP_NET_ADMIN --cap-add CAP_NET_RAW
             --setenv CLAUDE_SANDBOX_NETIF "$CLAUDE_NETIF"
@@ -277,6 +304,9 @@ let
 
       (add-cleanup ''
         if [ -n "''${CLAUDE_RUN_DIR-}" ]; then
+          if [ -r "$CLAUDE_RUN_DIR/session" ]; then
+            rm -rf "$(< "$CLAUDE_RUN_DIR/session")"
+          fi
           rm -rf "$CLAUDE_RUN_DIR"
         fi
       '')
@@ -427,6 +457,7 @@ let
       (set-env "SHELL" "/bin/bash")
 
       (add-pkg-deps [
+        sandboxRequest
         mcp-victoriametrics
         bash
         coreutils
@@ -457,12 +488,24 @@ let
       (try-fwd-env "ANTHROPIC_DEFAULT_HAIKU_MODEL")
     ]
   );
+
+  sandboxRequest = writeShellScriptBin "sandbox-request" ''
+    exec ${proxyExe} request ${proxyDir}/proxy.sock "$@"
+  '';
+
+  claudeAllow = writeShellApplication {
+    name = "claude-allow";
+    runtimeInputs = [ coreutils ];
+    runtimeEnv.SESSIONS_DIR_NAME = sessionsDir;
+    text = builtins.readFile ./claude-allow.sh;
+  };
 in
 symlinkJoin {
   name = "claude";
   # so tmux shows claude, not the jail's bash
   paths = [
     (writeShellScriptBin "claude" ''exec -a claude ${lib.getExe bash} ${lib.getExe jailed} "$@"'')
+    claudeAllow
   ];
   postBuild = ''
     install -Dm444 ${./claude-sandbox-completion.bash} $out/share/bash-completion/completions/claude

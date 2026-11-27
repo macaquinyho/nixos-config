@@ -7,9 +7,10 @@ edition = "2024"
 clap = { version = "4", default-features = false, features = ["derive", "error-context", "std"] }
 fast-socks5 = "1"
 log = "0.4"
+nix = { version = "0.32.0", default-features = false, features = ["socket", "ioctl"] }
 rustix = { version = "1", features = ["net"] }
 systemd-journal-logger = "2"
-tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt", "signal", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt", "signal", "sync", "time"] }
 
 [profile.release]
 lto = true

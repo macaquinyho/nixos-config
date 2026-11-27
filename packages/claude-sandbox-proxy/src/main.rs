@@ -29,6 +29,9 @@ use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
 use tokio::process::Command;
 use tokio::signal::unix::{SignalKind, signal};
 
+mod session;
+use session::{Session, Sessions};
+
 const MAX_HEAD: u64 = 8 * 1024;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const IDLE_EXIT: Duration = Duration::from_secs(5 * 60);
@@ -37,6 +40,8 @@ const LOG_FD_VAR: &str = "CLAUDE_SANDBOX_LOG_FD";
 const GIT_SSH_MAGIC: u8 = 0;
 // exit status for a refused git-ssh request, like ssh's own failures
 const GIT_SSH_REFUSED: u8 = 255;
+// lets the host prompt show why a CONNECT is asked for
+const REASON_HEADER: &str = "x-sandbox-reason";
 
 #[derive(Parser)]
 enum Cli {
@@ -48,6 +53,13 @@ enum Cli {
         /// ssh client run for git-ssh requests
         #[arg(long, default_value = "ssh")]
         ssh: PathBuf,
+        /// Per-session allowlists, in DIR/NETNS/allow, where NETNS is the inode
+        /// of the connecting process's network namespace
+        #[arg(long, value_name = "DIR")]
+        sessions: Option<PathBuf>,
+        /// notify-send, to ask on the host about a session's denied destinations
+        #[arg(long, requires = "sessions")]
+        notify: Option<PathBuf>,
         /// Allowed destinations. A leading dot in HOST also allows its subdomains.
         #[arg(value_name = "HOST:PORT", required = true, value_parser = Allowed::parse)]
         allowed: Vec<Allowed>,
@@ -68,6 +80,16 @@ enum Cli {
         #[arg(last = true, required = true)]
         command: Vec<OsString>,
     },
+    /// Ask the proxy behind SOCKET to let this session reach HOST[:PORT],
+    /// which may prompt on the host, and wait for the answer
+    Request {
+        socket: PathBuf,
+        #[arg(value_name = "HOST[:PORT]")]
+        dest: String,
+        /// Shown in the prompt
+        #[arg(default_value = "")]
+        reason: String,
+    },
     /// Copy stdin to the journal as warnings, like systemd-cat
     Journal { identifier: String },
 }
@@ -81,6 +103,7 @@ enum Error {
     Journal(io::Error),
     GitSshArgs(String),
     GitSsh(io::Error),
+    Request(io::Error),
 }
 
 impl fmt::Display for Error {
@@ -93,6 +116,7 @@ impl fmt::Display for Error {
             Error::Journal(e) => write!(f, "journal: {e}"),
             Error::GitSshArgs(e) => write!(f, "git-ssh: {e}"),
             Error::GitSsh(e) => write!(f, "git-ssh: {e}"),
+            Error::Request(e) => write!(f, "request: {e}"),
         }
     }
 }
@@ -103,11 +127,14 @@ async fn main() -> ExitCode {
         Cli::Serve {
             git_ssh_hosts,
             ssh,
+            sessions,
+            notify,
             allowed,
         } => serve(Config {
             allowed,
             git_ssh_hosts: git_ssh_hosts.iter().map(|h| normalize_host(h)).collect(),
             ssh,
+            sessions: sessions.map(|dir| Sessions::new(dir, notify)),
         })
         .await
         .map(|()| ExitCode::SUCCESS),
@@ -117,6 +144,11 @@ async fn main() -> ExitCode {
             socket,
             command,
         } => bridge(addr, socket, command).await,
+        Cli::Request {
+            socket,
+            dest,
+            reason,
+        } => request(&socket, &dest, &reason),
         Cli::Journal { identifier } => journal(identifier).map(|()| ExitCode::SUCCESS),
     };
     result.unwrap_or_else(|e| {
@@ -164,6 +196,7 @@ struct Config {
     allowed: Vec<Allowed>,
     git_ssh_hosts: Vec<String>,
     ssh: PathBuf,
+    sessions: Option<Sessions>,
 }
 
 async fn serve(config: Config) -> Result<(), Error> {
@@ -233,16 +266,17 @@ async fn tunnel(client: UnixStream, config: &Config) -> Result<(), String> {
     if first == GIT_SSH_MAGIC {
         return git_ssh_serve(client, config).await;
     }
-    let allowed = &config.allowed[..];
+    let session = config.sessions.as_ref().and_then(|s| s.of(&client));
+    let session = session.as_ref();
     let client = BufReader::new(client);
     let Tunnel {
         target,
         mut client,
         mut upstream,
     } = if first == consts::SOCKS5_VERSION {
-        socks5(client, allowed).await?
+        socks5(client, config, session).await?
     } else {
-        http_connect(client, allowed).await?
+        http_connect(client, config, session).await?
     };
     splice(&mut client, &mut upstream)
         .await
@@ -251,6 +285,7 @@ async fn tunnel(client: UnixStream, config: &Config) -> Result<(), String> {
 
 enum Refused {
     Denied,
+    Private,
     Failed(io::Error),
     TimedOut,
 }
@@ -259,17 +294,44 @@ impl fmt::Display for Refused {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Refused::Denied => f.write_str("denied"),
+            Refused::Private => f.write_str("resolves to no public address"),
             Refused::Failed(e) => write!(f, "{e}"),
             Refused::TimedOut => f.write_str("connect timed out"),
         }
     }
 }
 
-async fn dial(host: &str, port: u16, allowed: &[Allowed]) -> Result<TcpStream, Refused> {
-    if !allowed.iter().any(|a| a.matches(host, port)) {
+async fn dial(
+    host: &str,
+    port: u16,
+    config: &Config,
+    session: Option<&Session>,
+    reason: &str,
+) -> Result<TcpStream, Refused> {
+    if config.allowed.iter().any(|a| a.matches(host, port)) {
+        return connect((host, port)).await;
+    }
+    let (Some(sessions), Some(session)) = (&config.sessions, session) else {
+        return Err(Refused::Denied);
+    };
+    if !session.allows(host, port) && !sessions.prompt(session, host, port, reason).await {
         return Err(Refused::Denied);
     }
-    let upstream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect((host, port)))
+    // only the addresses checked here are dialed, so DNS can't change its answer
+    let addrs = tokio::time::timeout(CONNECT_TIMEOUT, tokio::net::lookup_host((host, port)))
+        .await
+        .map_err(|_| Refused::TimedOut)?
+        .map_err(Refused::Failed)?
+        .filter(|addr| session::is_public(addr.ip()))
+        .collect::<Vec<_>>();
+    if addrs.is_empty() {
+        return Err(Refused::Private);
+    }
+    connect(&addrs[..]).await
+}
+
+async fn connect(addr: impl tokio::net::ToSocketAddrs) -> Result<TcpStream, Refused> {
+    let upstream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(addr))
         .await
         .map_err(|_| Refused::TimedOut)?
         .map_err(Refused::Failed)?;
@@ -279,13 +341,15 @@ async fn dial(host: &str, port: u16, allowed: &[Allowed]) -> Result<TcpStream, R
 
 async fn http_connect<S: Stream + AsyncBufRead>(
     mut client: S,
-    allowed: &[Allowed],
+    config: &Config,
+    session: Option<&Session>,
 ) -> Result<Tunnel<S>, String> {
     let mut head = (&mut client).take(MAX_HEAD);
     let mut request = String::new();
     head.read_line(&mut request)
         .await
         .map_err(|e| format!("read: {e}"))?;
+    let mut reason = String::new();
     loop {
         let mut header = String::new();
         match head.read_line(&mut header).await {
@@ -293,6 +357,11 @@ async fn http_connect<S: Stream + AsyncBufRead>(
             Ok(_) if header.trim_end().is_empty() => break,
             Ok(_) => {}
             Err(e) => return Err(format!("read: {e}")),
+        }
+        if let Some((name, value)) = header.split_once(':')
+            && name.eq_ignore_ascii_case(REASON_HEADER)
+        {
+            reason = session::clean_reason(value);
         }
     }
 
@@ -311,11 +380,11 @@ async fn http_connect<S: Stream + AsyncBufRead>(
     };
     let target = format!("{host}:{port}");
 
-    let upstream = match dial(&host, port, allowed).await {
+    let upstream = match dial(&host, port, config, session, &reason).await {
         Ok(upstream) => upstream,
         Err(refused) => {
             let status = match refused {
-                Refused::Denied => "403 Forbidden",
+                Refused::Denied | Refused::Private => "403 Forbidden",
                 Refused::Failed(_) => "502 Bad Gateway",
                 Refused::TimedOut => "504 Gateway Timeout",
             };
@@ -339,7 +408,11 @@ async fn http_reply<S: Stream>(client: &mut S, status: &str) {
     let _ = client.write_all(reply.as_bytes()).await;
 }
 
-async fn socks5<S: Stream>(client: S, allowed: &[Allowed]) -> Result<Tunnel<S>, String> {
+async fn socks5<S: Stream>(
+    client: S,
+    config: &Config,
+    session: Option<&Session>,
+) -> Result<Tunnel<S>, String> {
     let socks_err = |e: SocksServerError| format!("socks5: {e}");
     let (proto, command, addr) = Socks5ServerProtocol::accept_no_auth(client)
         .await
@@ -358,7 +431,7 @@ async fn socks5<S: Stream>(client: S, allowed: &[Allowed]) -> Result<Tunnel<S>, 
         return Err(format!("{target}: socks5 {command:?} is not supported"));
     }
 
-    match dial(&host, port, allowed).await {
+    match dial(&host, port, config, session, "").await {
         Ok(upstream) => {
             // clients ignore the bound address for CONNECT
             let client = proto
@@ -373,7 +446,7 @@ async fn socks5<S: Stream>(client: S, allowed: &[Allowed]) -> Result<Tunnel<S>, 
         }
         Err(refused) => {
             let reply = match &refused {
-                Refused::Denied => ReplyError::ConnectionNotAllowed,
+                Refused::Denied | Refused::Private => ReplyError::ConnectionNotAllowed,
                 Refused::Failed(e) if e.kind() == ErrorKind::ConnectionRefused => {
                     ReplyError::ConnectionRefused
                 }
@@ -604,6 +677,42 @@ fn git_ssh_client(socket: &Path, args: &[String]) -> Result<ExitCode, Error> {
     let mut code = [0u8];
     sock.read_exact(&mut code).map_err(Error::GitSsh)?;
     Ok(ExitCode::from(code[0]))
+}
+
+fn request(socket: &Path, dest: &str, reason: &str) -> Result<ExitCode, Error> {
+    let dest = if dest.contains(':') {
+        dest.to_owned()
+    } else {
+        format!("{dest}:443")
+    };
+    if dest.contains(|c: char| c.is_whitespace() || c.is_control()) {
+        return Err(Error::Request(ErrorKind::InvalidInput.into()));
+    }
+    let reason = session::clean_reason(reason);
+    let mut sock = std::os::unix::net::UnixStream::connect(socket).map_err(Error::Request)?;
+    write!(
+        sock,
+        "CONNECT {dest} HTTP/1.1\r\n{REASON_HEADER}: {reason}\r\n\r\n"
+    )
+    .map_err(Error::Request)?;
+    let mut status = String::new();
+    io::BufReader::new(&sock)
+        .read_line(&mut status)
+        .map_err(Error::Request)?;
+    match status.split_whitespace().nth(1) {
+        Some("200") => {
+            println!("allowed: {dest}");
+            Ok(ExitCode::SUCCESS)
+        }
+        Some("403") => {
+            println!("not allowed: {dest}");
+            Ok(ExitCode::FAILURE)
+        }
+        _ => {
+            println!("allowed, but connecting failed: {dest} ({})", status.trim());
+            Ok(ExitCode::FAILURE)
+        }
+    }
 }
 
 fn take_log_fd() -> Option<File> {
