@@ -312,6 +312,8 @@ let
           if [ -r "$CLAUDE_RUN_DIR/session" ]; then
             rm -rf "$(< "$CLAUDE_RUN_DIR/session")"
           fi
+          # some tools leave read-only dirs behind, like Go's module cache
+          chmod -R u+w "$CLAUDE_RUN_DIR" 2> /dev/null || true
           rm -rf "$CLAUDE_RUN_DIR"
         fi
       '')
@@ -353,9 +355,21 @@ let
     ++ [
       no-new-session
 
-      # one login, one history and one set of settings for every workspace,
-      # under ~/.local/share/jail.nix/home/claude-code
-      (persist-home "claude-code")
+      # A fresh home every session, on disk in the run dir, so it goes with it.
+      # Only Claude's own state persists: login, chats, history, settings,
+      # plugins. CLAUDE_CONFIG_DIR moves .claude.json into ~/.claude, so one
+      # directory mount holds all of it.
+      (add-runtime ''
+        mkdir "$CLAUDE_RUN_DIR/home"
+        CLAUDE_STATE=~/.local/share/jail.nix/home/claude-code
+        mkdir -p "$CLAUDE_STATE/.claude"
+        if [ -f "$CLAUDE_STATE/.claude.json" ] && [ ! -e "$CLAUDE_STATE/.claude/.claude.json" ]; then
+          mv "$CLAUDE_STATE/.claude.json" "$CLAUDE_STATE/.claude/.claude.json"
+        fi
+      '')
+      (rw-bind (noescape "\"$CLAUDE_RUN_DIR/home\"") (noescape "~"))
+      (rw-bind (noescape "\"$CLAUDE_STATE/.claude\"") (noescape "~/.claude"))
+      (set-env "CLAUDE_CONFIG_DIR" (noescape "\"$HOME/.claude\""))
 
       # global CLAUDE.md
       (bind-pkg (noescape "~/.claude/CLAUDE.md") claudeMdFile)
