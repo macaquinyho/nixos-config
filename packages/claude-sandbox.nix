@@ -368,6 +368,10 @@ let
             mv "$CLAUDE_OLD/.claude/$f" "$CLAUDE_STATE/"
           fi
         done
+        # hosts that never ran the CLAUDE_CONFIG_DIR layout keep it at the top
+        if [ -f "$CLAUDE_OLD/.claude.json" ] && [ ! -e "$CLAUDE_STATE/.claude.json" ]; then
+          mv "$CLAUDE_OLD/.claude.json" "$CLAUDE_STATE/"
+        fi
         mkdir -p "$CLAUDE_STATE/projects" "$CLAUDE_STATE/plugins"
         [ -e "$CLAUDE_STATE/.claude.json" ] || echo '{}' > "$CLAUDE_STATE/.claude.json"
         touch "$CLAUDE_STATE/.credentials.json" "$CLAUDE_STATE/history.jsonl"
