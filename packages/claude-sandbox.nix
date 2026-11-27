@@ -355,20 +355,38 @@ let
     ++ [
       no-new-session
 
-      # A fresh home every session, on disk in the run dir, so it goes with it.
-      # Only Claude's own state persists: login, chats, history, settings,
-      # plugins. CLAUDE_CONFIG_DIR moves .claude.json into ~/.claude, so one
-      # directory mount holds all of it.
+      # A fresh home and ~/.claude every session, on disk in the run dir, so
+      # they go with it. Only these persist, in ~/.local/share/claude-sandbox:
+      # config and login, chats, prompt history and plugins.
+      # CLAUDE_CONFIG_DIR moves .claude.json into ~/.claude.
       (add-runtime ''
-        mkdir "$CLAUDE_RUN_DIR/home"
-        CLAUDE_STATE=~/.local/share/jail.nix/home/claude-code
-        mkdir -p "$CLAUDE_STATE/.claude"
-        if [ -f "$CLAUDE_STATE/.claude.json" ] && [ ! -e "$CLAUDE_STATE/.claude/.claude.json" ]; then
-          mv "$CLAUDE_STATE/.claude.json" "$CLAUDE_STATE/.claude/.claude.json"
+        CLAUDE_STATE=~/.local/share/claude-sandbox
+        CLAUDE_OLD=~/.local/share/jail.nix/home/claude-code
+        if [ ! -e "$CLAUDE_STATE" ] && [ -d "$CLAUDE_OLD/.claude" ]; then
+          mkdir -p "$CLAUDE_STATE"
+          for f in .claude.json .credentials.json history.jsonl projects plugins; do
+            if [ -e "$CLAUDE_OLD/.claude/$f" ]; then
+              mv "$CLAUDE_OLD/.claude/$f" "$CLAUDE_STATE/"
+            fi
+          done
         fi
+        mkdir -p "$CLAUDE_STATE/projects" "$CLAUDE_STATE/plugins"
+        [ -e "$CLAUDE_STATE/.claude.json" ] || echo '{}' > "$CLAUDE_STATE/.claude.json"
+        touch "$CLAUDE_STATE/.credentials.json" "$CLAUDE_STATE/history.jsonl"
+        chmod 600 "$CLAUDE_STATE/.claude.json" "$CLAUDE_STATE/.credentials.json" "$CLAUDE_STATE/history.jsonl"
+
+        mkdir -p "$CLAUDE_RUN_DIR/home/.claude"
+        # .claude.json is saved by renaming a temp file over it, which fails on
+        # a bind-mounted file, but Claude writes it through symlinks
+        ln -s "$CLAUDE_STATE/.claude.json" "$CLAUDE_RUN_DIR/home/.claude/.claude.json"
       '')
       (rw-bind (noescape "\"$CLAUDE_RUN_DIR/home\"") (noescape "~"))
-      (rw-bind (noescape "\"$CLAUDE_STATE/.claude\"") (noescape "~/.claude"))
+      (rw-bind (noescape "\"$CLAUDE_STATE\"") (noescape "\"$CLAUDE_STATE\""))
+      # credentials are opened with O_NOFOLLOW and rewritten in place, so a bind works and a symlink doesn't
+      (rw-bind (noescape "\"$CLAUDE_STATE/.credentials.json\"") (noescape "~/.claude/.credentials.json"))
+      (rw-bind (noescape "\"$CLAUDE_STATE/history.jsonl\"") (noescape "~/.claude/history.jsonl"))
+      (rw-bind (noescape "\"$CLAUDE_STATE/projects\"") (noescape "~/.claude/projects"))
+      (rw-bind (noescape "\"$CLAUDE_STATE/plugins\"") (noescape "~/.claude/plugins"))
       (set-env "CLAUDE_CONFIG_DIR" (noescape "\"$HOME/.claude\""))
 
       # global CLAUDE.md
