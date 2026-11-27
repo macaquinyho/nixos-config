@@ -141,6 +141,11 @@ let
       them. If a task needs that, ask me to restart claude with `--add-dir` for
       that path.
 
+      Git config, hooks and the files that locate `.git` are read-only, as git
+      on the host would run what they name. Commands that write repo config
+      fail: use `git switch -c NAME --no-track`, `git -c KEY=VALUE` for one-off
+      settings, and ask me for remotes, submodule init or hook installs.
+
       ## Sandbox dev shell
 
       The devShell from this directory's flake.nix, if there is one, is already
@@ -443,6 +448,52 @@ let
             [ -f "$d/gitdir" ] || continue
             claude_covered "$(dirname "$(< "$d/gitdir")")" || RUNTIME_ARGS+=(--ro-bind "$d" "$d")
           done
+          claude_pin_git "$1" "$common"
+        }
+        # git on the host runs commands named in config and hooks, so the sandbox
+        # can't change them. Mount points can't be renamed or replaced, which pins
+        # the dirs holding them too.
+        claude_pin_git() {
+          local top gitdir common=$2 m f
+          top=$(${git}/bin/git -C "$1" rev-parse --show-toplevel)
+          gitdir=$(realpath -e -- "$(${git}/bin/git -C "$1" rev-parse --absolute-git-dir)")
+          if [ -d "$top/.git" ]; then
+            RUNTIME_ARGS+=(--bind "$top/.git" "$top/.git")
+          else
+            RUNTIME_ARGS+=(--ro-bind "$top/.git" "$top/.git")
+          fi
+          if [ "$gitdir" != "$common" ]; then
+            # a linked worktree finds the common dir through these
+            RUNTIME_ARGS+=(
+              --bind "$gitdir" "$gitdir"
+              --ro-bind "$gitdir/commondir" "$gitdir/commondir"
+              --ro-bind "$gitdir/gitdir" "$gitdir/gitdir"
+            )
+          fi
+          # the common dir and submodule git dirs. Sorted, a parent comes before its
+          # children, so pinning a child never hides the parent's read-only files.
+          while read -r m; do
+            [ "$m" = "$common" ] || RUNTIME_ARGS+=(--bind "$m" "$m")
+            mkdir -p "$m/hooks"
+            RUNTIME_ARGS+=(--ro-bind "$m/config" "$m/config" --ro-bind "$m/hooks" "$m/hooks")
+          done < <({
+            echo "$common"
+            find "$common/modules" -name HEAD -type f -printf '%h\n' 2> /dev/null |
+              while read -r m; do [ -f "$m/config" ] && echo "$m"; done
+          } | sort)
+          # relative to the worktree root, as git runs hooks from there. Created if
+          # missing, or the sandbox could create it.
+          if f=$(${git}/bin/git -C "$1" config --path core.hooksPath); then
+            f=$(cd "$top" && realpath -m -- "$f")
+            mkdir -p "$f"
+            RUNTIME_ARGS+=(--ro-bind "$f" "$f")
+          fi
+          if [ "$(${git}/bin/git -C "$1" config --bool extensions.worktreeConfig)" = true ]; then
+            for f in "$common/config.worktree" "$gitdir/config.worktree"; do
+              touch "$f"
+              RUNTIME_ARGS+=(--ro-bind "$f" "$f")
+            done
+          fi
         }
         claude_bind_git .
         for dir in "''${CLAUDE_EXTRA_DIRS[@]}"; do
