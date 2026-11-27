@@ -362,14 +362,12 @@ let
       (add-runtime ''
         CLAUDE_STATE=~/.local/share/claude-sandbox
         CLAUDE_OLD=~/.local/share/jail.nix/home/claude-code
-        if [ ! -e "$CLAUDE_STATE" ] && [ -d "$CLAUDE_OLD/.claude" ]; then
-          mkdir -p "$CLAUDE_STATE"
-          for f in .claude.json .credentials.json history.jsonl projects plugins; do
-            if [ -e "$CLAUDE_OLD/.claude/$f" ]; then
-              mv "$CLAUDE_OLD/.claude/$f" "$CLAUDE_STATE/"
-            fi
-          done
-        fi
+        mkdir -p "$CLAUDE_STATE"
+        for f in .claude.json .credentials.json history.jsonl projects plugins; do
+          if [ -e "$CLAUDE_OLD/.claude/$f" ] && [ ! -e "$CLAUDE_STATE/$f" ]; then
+            mv "$CLAUDE_OLD/.claude/$f" "$CLAUDE_STATE/"
+          fi
+        done
         mkdir -p "$CLAUDE_STATE/projects" "$CLAUDE_STATE/plugins"
         [ -e "$CLAUDE_STATE/.claude.json" ] || echo '{}' > "$CLAUDE_STATE/.claude.json"
         touch "$CLAUDE_STATE/.credentials.json" "$CLAUDE_STATE/history.jsonl"
