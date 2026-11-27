@@ -14,7 +14,9 @@ use std::process::Stdio;
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use nix::sys::signal::{Signal, kill};
 use nix::sys::socket::{getsockopt, sockopt::PeerPidfd};
+use nix::unistd::Pid;
 use tokio::io::AsyncReadExt;
 use tokio::net::UnixStream;
 use tokio::process::Command;
@@ -181,10 +183,15 @@ async fn ask(
         .ok()?;
     let mut stdout = child.stdout.take()?;
     let mut answer = String::new();
-    tokio::time::timeout(PROMPT_TIMEOUT, stdout.read_to_string(&mut answer))
-        .await
-        .ok()?
-        .ok()?;
+    let read = tokio::time::timeout(PROMPT_TIMEOUT, stdout.read_to_string(&mut answer)).await;
+    if read.is_err() {
+        // notify-send takes the notification down on SIGINT, not on a kill
+        if let Some(pid) = child.id().and_then(|pid| i32::try_from(pid).ok()) {
+            let _ = kill(Pid::from_raw(pid), Signal::SIGINT);
+        }
+        let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
+        return None;
+    }
     match answer.trim() {
         "hour" => Some(Answer::Hour),
         "session" => Some(Answer::Session),
